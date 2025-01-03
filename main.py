@@ -3,7 +3,7 @@ import logging
 from telegram import Update
 from telegram.ext import Updater, CommandHandler, CallbackContext
 from telethon import TelegramClient
-from telethon.errors import ChatAdminRequiredError, SessionPasswordNeededError, PhoneCodeRequiredError
+from telethon.errors import ChatAdminRequiredError, SessionPasswordNeededError, PhoneCodeInvalidError
 from telethon.tl.functions.account import ReportPeerRequest
 from telethon.tl.functions.channels import JoinChannelRequest
 from telethon.tl.types import (
@@ -59,14 +59,15 @@ async def handle_otp(account, client):
     try:
         # Start the client to log in
         await client.start(phone=account["phone"])
-    except PhoneCodeRequiredError:
+    except PhoneCodeInvalidError:  # For handling OTP issues
         logger.info(f"OTP required for {account['phone']}. Please provide the OTP.")
         otp = input(f"Enter OTP for {account['phone']}: ")
         await client.start(phone=account["phone"], code=otp)
-    except SessionPasswordNeededError:
+    except SessionPasswordNeededError:  # For handling 2FA issues
         logger.info(f"2FA required for {account['phone']}. Please provide the password.")
         password = input(f"Enter 2FA password for {account['phone']}: ")
         await client.start(phone=account["phone"], password=password)
+        
 
 # Reporting a group
 async def report_group(account, group_link, reason_text, times_to_report):
