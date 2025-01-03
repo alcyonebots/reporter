@@ -1,7 +1,6 @@
-import asyncio
 import logging
 from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
+from telegram.ext import Updater, CommandHandler, CallbackContext
 from telethon import TelegramClient
 from telethon.errors.rpcerrorlist import UserPrivacyRestrictedError, FloodWaitError
 from telethon.errors import ChatAdminRequiredError
@@ -24,6 +23,8 @@ logger = logging.getLogger(__name__)
 
 # Bot configuration
 BOT_TOKEN = "8077898847:AAHteiAz12NWkO096hBmkEIoqAjk0--DtEk"
+API_ID = "29872536"
+API_HASH = "65e1f714a47c0879734553dc460e98d6"
 
 # Telegram account credentials
 ACCOUNTS = [
@@ -44,16 +45,21 @@ REPORT_REASONS = {
     "other": InputReportReasonOther(),
 }
 
-async def report_group(account, group_link, reason_text, times_to_report, update):
-    """Report a group using a specific account."""
-    client = TelegramClient(f"session_{account['phone']}", api_id=API_ID, api_hash=API_HASH)
+def start(update: Update, context: CallbackContext):
+    """Send a welcome message when the bot is started."""
+    update.message.reply_text("Welcome! Use /report to report a group.\n"
+                              "Format: /report <group_link> <reason> <number_of_reports>")
+
+async def report_group(account, group_link, reason_text, times_to_report):
+    """Asynchronous function to report a group."""
+    client = TelegramClient(f"session_{account['phone']}", API_ID, API_HASH)
     await client.connect()
 
     try:
         logger.info(f"Logged in as {account['phone']} using string session")
         if not await client.is_user_authorized():
             logger.error(f"Account {account['phone']} is not authorized.")
-            return "Account not authorized."
+            return f"Account {account['phone']} is not authorized."
 
         # Check if bot is part of the group
         group = await client.get_entity(group_link)
@@ -81,7 +87,6 @@ async def report_group(account, group_link, reason_text, times_to_report, update
         # Check if the account has reported 10 times
         if account["report_count"] >= 10:
             logger.info(f"Account {account['phone']} has reported 10 times.")
-            await update.message.reply_text(f"Account {account['phone']} has reported 10 times.")
             return f"Account {account['phone']} has reported 10 times."
 
         return f"Successfully reported group '{group.title}' {times_to_report} times for: {reason_text}"
@@ -98,10 +103,10 @@ async def report_group(account, group_link, reason_text, times_to_report, update
     finally:
         await client.disconnect()
 
-async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def report(update: Update, context: CallbackContext):
     """Handle the /report command."""
     if len(context.args) < 3:
-        await update.message.reply_text(
+        update.message.reply_text(
             "Usage: /report <group_link> <reason> <number_of_times_to_report>\n\n"
             "Example: /report https://t.me/examplegroup spam 5"
         )
@@ -113,25 +118,28 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     results = []
     for account in ACCOUNTS:
-        result = await report_group(account, group_link, reason_text, times_to_report, update)
+        result = asyncio.run(report_group(account, group_link, reason_text, times_to_report))
         results.append(result)
 
-    await update.message.reply_text("\n".join(results))
+    update.message.reply_text("\n".join(results))
 
-async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def stats(update: Update, context: CallbackContext):
     """Show reporting stats."""
     stats = "\n".join([f"{acc['phone']}: {acc['report_count']} reports" for acc in ACCOUNTS])
-    await update.message.reply_text(f"Report stats:\n{stats}")
+    update.message.reply_text(f"Report stats:\n{stats}")
 
 def main():
     """Start the bot."""
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
+    updater = Updater(BOT_TOKEN, use_context=True)
 
-    app.add_handler(CommandHandler("report", report))
-    app.add_handler(CommandHandler("stats", stats))
+    updater.dispatcher.add_handler(CommandHandler("start", start))
+    updater.dispatcher.add_handler(CommandHandler("report", report))
+    updater.dispatcher.add_handler(CommandHandler("stats", stats))
 
     logger.info("Bot is running...")
-    app.run_polling()
+    updater.start_polling()
+    updater.idle()
 
 if __name__ == "__main__":
     main()
+                                               
