@@ -3,7 +3,7 @@ import logging
 from telegram import Update
 from telegram.ext import Updater, CommandHandler, CallbackContext
 from telethon import TelegramClient
-from telethon.errors import ChatAdminRequiredError, SessionPasswordNeededError
+from telethon.errors import ChatAdminRequiredError, SessionPasswordNeededError, PhoneCodeRequiredError
 from telethon.tl.functions.account import ReportPeerRequest
 from telethon.tl.functions.channels import JoinChannelRequest
 from telethon.tl.types import (
@@ -59,6 +59,10 @@ async def handle_otp(account, client):
     try:
         # Start the client to log in
         await client.start(phone=account["phone"])
+    except PhoneCodeRequiredError:
+        logger.info(f"OTP required for {account['phone']}. Please provide the OTP.")
+        otp = input(f"Enter OTP for {account['phone']}: ")
+        await client.start(phone=account["phone"], code=otp)
     except SessionPasswordNeededError:
         logger.info(f"2FA required for {account['phone']}. Please provide the password.")
         password = input(f"Enter 2FA password for {account['phone']}: ")
@@ -153,4 +157,4 @@ def main():
 
 if __name__ == "__main__":
     main()
-                                               
+    
