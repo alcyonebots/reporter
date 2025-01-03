@@ -1,11 +1,11 @@
+import asyncio
 import logging
 from telegram import Update
 from telegram.ext import Updater, CommandHandler, CallbackContext
 from telethon import TelegramClient
-from telethon.errors.rpcerrorlist import UserPrivacyRestrictedError, FloodWaitError
-from telethon.errors import ChatAdminRequiredError
+from telethon.errors import ChatAdminRequiredError, SessionPasswordNeededError
 from telethon.tl.functions.account import ReportPeerRequest
-from telethon.tl.functions.messages import JoinChannelRequest
+from telethon.tl.functions.channels import JoinChannelRequest
 from telethon.tl.types import (
     InputReportReasonSpam,
     InputReportReasonViolence,
@@ -13,24 +13,24 @@ from telethon.tl.types import (
     InputReportReasonChildAbuse,
     InputReportReasonCopyright,
     InputReportReasonFake,
-    InputReportReasonDrugs,
     InputReportReasonOther,
 )
+from telethon.sessions import StringSession
 
 # Logging setup
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 # Bot configuration
-BOT_TOKEN = "8077898847:AAHteiAz12NWkO096hBmkEIoqAjk0--DtEk"
-API_ID = "29872536"
-API_HASH = "65e1f714a47c0879734553dc460e98d6"
+BOT_TOKEN = "8077898847:AAHteiAz12NWkO096hBmkEIoqAjk0--DtEk"  # Your bot token
+API_ID = "29872536"  # Your API ID
+API_HASH = "65e1f714a47c0879734553dc460e98d6"  # Your API Hash
 
-# Telegram account credentials
+# Accounts configuration
 ACCOUNTS = [
-    {"string_session": "1BVtsOIgBuxZ_i9g5pFp1IiN_9uzQSmV_ihyFq2hY0uhuySWHmHEZR1zb7XUWdmXdYg8hvC6ET9URHbTb6xKAZGnVO8koAeLVKJQ3tS_1HOw4LUZn4YgaVerfix3gY67w5I739t_D1jXGoNJZN1sjcEdI2rwpWHA8N616CMroED-oAd2DQ6EUjkrUzxideiPUXQk98zIAOSiuKnK3DsUps_RnTxVQnSb300Dm2rBpihd9xD0YaYuWmhRYpKPCh5gYsqJgkZLQjVD_k5eiTCgNWrp1FxNrJ1BrvErcJkre4UpvJBbD89Dg15-UOJFMndqAOPDb1kr1PI6ivnk5BFCCFHVKq4IFz6Q=", "phone": "+919108454466", "report_count": 0},
-    {"string_session": "1BVtsOIgBu74VmxmT5QrA-sHXOI0UjhQ0r4Tqjus6pX8FGFKEYA__3cG7IX5MnZaDRrRuSVvCdfXzhEsAwaUbPibE2JuYsVJ53Eirh0lnrcNfKG3z70dwS0YGO5akspc3xg_UrfnyQkdSneBtZrSbx5DJvTTuGZmJ7WyXPPLovxItFSG9im3W_XU5DWxvDT0pNEFrTp9M33S4SzmNEUNi69H_30WBkoZzpOj3x5fAPgXPoByCWbC4IT4PyG13nunyfFuGfHYPfgzyoKaTSjoLEW4r9aDhRoPILVNPAJZ6LYLEzzt9xRnjPyRgdC8IBV-FwLeAsWaGLQPcyBlTYCV0EFyl2gIX-1g=", "phone": "+918329056828", "report_count": 0},
-    # Add more accounts here with their string sessions
+    {"phone": "+919108454466", "report_count": 0, "client": None, "string_session": None},
+    {"phone": "+918329056828", "report_count": 0, "client": None, "string_session": None},
+    # Add more accounts here if needed
 ]
 
 # Report reasons mapping
@@ -41,102 +41,113 @@ REPORT_REASONS = {
     "child abuse": InputReportReasonChildAbuse(),
     "copyright": InputReportReasonCopyright(),
     "fake": InputReportReasonFake(),
-    "drugs": InputReportReasonDrugs(),
     "other": InputReportReasonOther(),
 }
 
-def start(update: Update, context: CallbackContext):
-    """Send a welcome message when the bot is started."""
-    update.message.reply_text("Welcome! Use /report to report a group.\n"
-                              "Format: /report <group_link> <reason> <number_of_reports>")
+# Initialize clients and load sessions
+def initialize_clients():
+    for account in ACCOUNTS:
+        # Check if a saved session exists for the account
+        if account["string_session"]:
+            account["client"] = TelegramClient(StringSession(account["string_session"]), API_ID, API_HASH)
+        else:
+            account["client"] = TelegramClient(StringSession(), API_ID, API_HASH)
+        logger.info(f"Client for {account['phone']} initialized.")
 
-async def report_group(account, group_link, reason_text, times_to_report):
-    """Asynchronous function to report a group."""
-    client = TelegramClient(f"session_{account['phone']}", API_ID, API_HASH)
-    await client.connect()
-
+# Function to handle OTP and 2FA
+async def handle_otp(account, client):
     try:
-        logger.info(f"Logged in as {account['phone']} using string session")
-        if not await client.is_user_authorized():
-            logger.error(f"Account {account['phone']} is not authorized.")
-            return f"Account {account['phone']} is not authorized."
+        # Start the client to log in
+        await client.start(phone=account["phone"])
+    except SessionPasswordNeededError:
+        logger.info(f"2FA required for {account['phone']}. Please provide the password.")
+        password = input(f"Enter 2FA password for {account['phone']}: ")
+        await client.start(phone=account["phone"], password=password)
 
-        # Check if bot is part of the group
-        group = await client.get_entity(group_link)
-        if not group.is_participant:
-            try:
-                await client(JoinChannelRequest(group_link))
-                logger.info(f"Joined group: {group_link}")
-            except ChatAdminRequiredError:
-                logger.error(f"Cannot join group {group_link}. Admin privileges required.")
-                return "Cannot join group. Admin privileges required."
+# Reporting a group
+async def report_group(account, group_link, reason_text, times_to_report):
+    try:
+        reason = REPORT_REASONS.get(reason_text.lower(), None)
+        if not reason:
+            return "Invalid reason. Please choose from 'spam', 'violence', 'pornography', 'child abuse', 'copyright', 'fake', or 'other'."
+        
+        # Get the group chat by link
+        group = await account["client"].get_entity(group_link)
+        
+        # Check if bot is a member of the group
+        try:
+            await account["client"](JoinChannelRequest(group))
+        except Exception as e:
+            logger.error(f"Error joining group {group_link}: {e}")
+            return f"Error: Could not join group {group_link}. Please make sure the group is public or the bot is already a member."
 
-        # Report the group multiple times
+        # Report the group for the specified number of times
         for _ in range(times_to_report):
-            report_reason = REPORT_REASONS.get(reason_text.lower(), REPORT_REASONS["other"])
-            await client(
-                ReportPeerRequest(
-                    peer=group,
-                    reason=report_reason,
-                    message=f"Reported group '{group.title}' for: {reason_text}"
-                )
-            )
+            await account["client"](ReportPeerRequest(group, reason))
             account["report_count"] += 1
-            logger.info(f"Reported group '{group.title}' for: {reason_text}")
 
-        # Check if the account has reported 10 times
-        if account["report_count"] >= 10:
-            logger.info(f"Account {account['phone']} has reported 10 times.")
-            return f"Account {account['phone']} has reported 10 times."
-
-        return f"Successfully reported group '{group.title}' {times_to_report} times for: {reason_text}"
-
-    except UserPrivacyRestrictedError:
-        logger.error("Privacy restrictions prevent reporting.")
-        return "Privacy restrictions prevent reporting."
-    except FloodWaitError as e:
-        logger.warning(f"Flood wait: wait {e.seconds} seconds before retrying.")
-        return f"Flood wait: wait {e.seconds} seconds before retrying."
+        return f"Successfully reported {group_link} for {reason_text} {times_to_report} times. Total reports by this account: {account['report_count']}."
+    
+    except ChatAdminRequiredError:
+        return "Error: You must be an admin to report this group."
     except Exception as e:
-        logger.error(f"Error: {e}")
+        logger.error(f"Error while reporting group {group_link}: {e}")
         return f"Error: {e}"
-    finally:
-        await client.disconnect()
 
+# Command to report a group
 def report(update: Update, context: CallbackContext):
-    """Handle the /report command."""
     if len(context.args) < 3:
-        update.message.reply_text(
-            "Usage: /report <group_link> <reason> <number_of_times_to_report>\n\n"
-            "Example: /report https://t.me/examplegroup spam 5"
-        )
+        update.message.reply_text("Usage: /report <group_link> <reason> <number_of_reports>")
         return
 
     group_link = context.args[0]
     reason_text = context.args[1]
-    times_to_report = int(context.args[2])
+    try:
+        times_to_report = int(context.args[2])
+    except ValueError:
+        update.message.reply_text("Invalid number of reports. Please provide a valid integer.")
+        return
 
-    results = []
-    for account in ACCOUNTS:
-        result = asyncio.run(report_group(account, group_link, reason_text, times_to_report))
-        results.append(result)
+    # Find the account with the lowest report count
+    account = min(ACCOUNTS, key=lambda acc: acc["report_count"])
 
-    update.message.reply_text("\n".join(results))
+    # Run the report asynchronously
+    result = asyncio.run(report_group(account, group_link, reason_text, times_to_report))
+    update.message.reply_text(result)
 
+    # Inform if an account has reported 10 times
+    if account["report_count"] >= 10:
+        update.message.reply_text(f"Account {account['phone']} has reported 10 times!")
+
+    # Save the string session for the account
+    account["string_session"] = account["client"].session.save()
+
+# Command to show stats
 def stats(update: Update, context: CallbackContext):
-    """Show reporting stats."""
-    stats = "\n".join([f"{acc['phone']}: {acc['report_count']} reports" for acc in ACCOUNTS])
-    update.message.reply_text(f"Report stats:\n{stats}")
+    stats_msg = "Report Stats:\n"
+    for account in ACCOUNTS:
+        stats_msg += f"Account {account['phone']}: {account['report_count']} reports\n"
+    update.message.reply_text(stats_msg)
 
+# Function to handle start command
+def start(update: Update, context: CallbackContext):
+    update.message.reply_text("Welcome! Send /report <group_link> <reason> <number_of_reports> to report a group.\nSend /stats to see report stats.")
+
+# Main function to set up the bot
 def main():
-    """Start the bot."""
+    # Initialize clients and load sessions
+    initialize_clients()
+
+    # Set up the updater and dispatcher
     updater = Updater(BOT_TOKEN, use_context=True)
+    dispatcher = updater.dispatcher
 
-    updater.dispatcher.add_handler(CommandHandler("start", start))
-    updater.dispatcher.add_handler(CommandHandler("report", report))
-    updater.dispatcher.add_handler(CommandHandler("stats", stats))
+    # Set up handlers
+    dispatcher.add_handler(CommandHandler("start", start))
+    dispatcher.add_handler(CommandHandler("report", report))
+    dispatcher.add_handler(CommandHandler("stats", stats))
 
-    logger.info("Bot is running...")
+    # Start the bot
     updater.start_polling()
     updater.idle()
 
