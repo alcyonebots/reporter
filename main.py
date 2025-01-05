@@ -101,22 +101,24 @@ async def login(phone, proxy=None):
         logger.error(f"An error occurred during login for account {phone}: {str(e)}")
         return None
 
-async def login_with_proxy(phone, proxies, max_attempts=2):
-    """Attempt to log in using proxies, switching proxies after 2 attempts."""
+async def login_with_proxy(phone, proxies, max_attempts_per_proxy=2):
+    """Attempt to log in using proxies, switching proxies after 2 failed attempts."""
     for proxy_index, proxy in enumerate(proxies):
-        for attempt in range(max_attempts):
+        attempts = 0
+        while attempts < max_attempts_per_proxy:
             try:
                 formatted_proxy = (proxy[0].upper(), proxy[1], int(proxy[2]))
-                logger.info(f"Attempt {attempt + 1}/{max_attempts} for {phone} using proxy: {formatted_proxy}")
+                logger.info(f"Attempt {attempts + 1}/{max_attempts_per_proxy} for {phone} using proxy: {formatted_proxy}")
 
                 client = await login(phone, proxy=formatted_proxy)
                 if client:
                     logger.info(f"Successfully logged in for {phone} using proxy: {formatted_proxy}")
                     return client
             except Exception as e:
-                logger.error(f"Attempt {attempt + 1} failed for {phone} using proxy {proxy}: {str(e)}")
+                attempts += 1
+                logger.error(f"Attempt {attempts} failed for {phone} using proxy {proxy}: {str(e)}")
 
-        logger.warning(f"Switching proxy for {phone} after {max_attempts} unsuccessful attempts.")
+        logger.warning(f"Switching to the next proxy for {phone} after {max_attempts_per_proxy} failed attempts.")
 
     logger.error(f"All proxies failed for {phone}. Skipping account.")
     return None
@@ -230,3 +232,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+            
