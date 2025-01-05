@@ -102,26 +102,23 @@ async def login(phone, proxy=None):
         return None
 
 async def login_with_proxy(phone, proxies, max_attempts=2):
-    """Attempt to log in using different proxies until successful."""
-    attempt = 0
-    client = None
-    while attempt < max_attempts:
-        try:
-            proxy = proxies[attempt % len(proxies)]
-            proxy = (proxy[0].upper(), proxy[1], int(proxy[2]))  # Format proxy tuple
-            logger.info(f"Attempting login for {phone} using proxy: {proxy}")
+    """Attempt to log in using proxies, switching proxies after 2 attempts."""
+    for proxy_index, proxy in enumerate(proxies):
+        for attempt in range(max_attempts):
+            try:
+                formatted_proxy = (proxy[0].upper(), proxy[1], int(proxy[2]))
+                logger.info(f"Attempt {attempt + 1}/{max_attempts} for {phone} using proxy: {formatted_proxy}")
 
-            client = await login(phone, proxy=proxy)
-            if client:
-                logger.info(f"Successfully logged in for {phone} using proxy: {proxy}")
-                return client
-        except Exception as e:
-            logger.error(f"Login failed for {phone} using proxy {proxy}: {str(e)}")
+                client = await login(phone, proxy=formatted_proxy)
+                if client:
+                    logger.info(f"Successfully logged in for {phone} using proxy: {formatted_proxy}")
+                    return client
+            except Exception as e:
+                logger.error(f"Attempt {attempt + 1} failed for {phone} using proxy {proxy}: {str(e)}")
 
-        attempt += 1
-        logger.warning(f"Retrying with a different proxy for {phone} (Attempt {attempt}/{max_attempts}).")
+        logger.warning(f"Switching proxy for {phone} after {max_attempts} unsuccessful attempts.")
 
-    logger.error(f"All proxy attempts failed for {phone}. Skipping account.")
+    logger.error(f"All proxies failed for {phone}. Skipping account.")
     return None
 
 async def report_entity(client, entity, reason, times_to_report):
@@ -158,19 +155,25 @@ async def report_entity(client, entity, reason, times_to_report):
 async def main():
     print("=== Telegram Multi-Account Reporting Tool ===")
 
-    # Load proxies
-    proxies = load_proxies()
-    if not proxies:
-        print("No proxies found in 'proxy.txt'. Proceeding without proxies.")
-    else:
-        print(f"{len(proxies)} proxies loaded.")
-
     # Step 1: Log in to multiple accounts
     account_count = int(input("Enter the number of accounts to use: "))
+
+    # Ask if proxies should be used
+    use_proxies = input("Do you want to use proxies? (y/n): ").strip().lower()
+    proxies = load_proxies() if use_proxies == "y" else None
+    if use_proxies == "y" and not proxies:
+        print("No proxies found in 'proxy.txt'. Proceeding without proxies.")
+        use_proxies = "n"
+
     clients = []
     for i in range(account_count):
         phone = input(f"Enter the phone number for account {i + 1} (e.g., +123456789): ")
-        client = await login_with_proxy(phone, proxies)
+
+        if use_proxies == "y":
+            client = await login_with_proxy(phone, proxies)
+        else:
+            client = await login(phone)
+
         if client:
             clients.append(client)
         else:
@@ -227,4 +230,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-            
