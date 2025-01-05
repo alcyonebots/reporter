@@ -55,11 +55,11 @@ def load_proxies(file_path="proxy.txt"):
         logger.error(f"Proxy file '{file_path}' not found.")
         return []
 
-async def connect_existing_sessions(proxies):
+async def connect_existing_sessions(proxies, required_count):
     """Retrieve and connect to sessions already in the database using proxies."""
     existing_sessions = []
     session_docs = list(sessions_collection.find())
-    for i, session_data in enumerate(session_docs):
+    for i, session_data in enumerate(session_docs[:required_count]):
         phone = session_data["phone"]
         session_string = session_data["session_string"]
         proxy = None if not proxies else proxies[i % len(proxies)]
@@ -111,12 +111,12 @@ async def login(phone, proxy=None):
         logger.error(f"An error occurred during login for account {phone}: {str(e)}")
         return None
 
-async def assign_proxies_to_new_sessions(proxies, accounts_needed, connected_sessions):
+async def assign_proxies_to_new_sessions(proxies, accounts_needed):
     """Log in to new accounts using proxies."""
     new_sessions = []
     for i in range(accounts_needed):
         phone = input(f"Enter the phone number for account {i + 1}: ")
-        proxy = None if not proxies else proxies[(len(connected_sessions) + i) % len(proxies)]
+        proxy = None if not proxies else proxies[i % len(proxies)]
         formatted_proxy = (proxy[0].upper(), proxy[1], int(proxy[2])) if proxy else None
 
         client = await login(phone, proxy=formatted_proxy)
@@ -128,24 +128,26 @@ async def assign_proxies_to_new_sessions(proxies, accounts_needed, connected_ses
 async def main():
     print("=== Telegram Multi-Account Reporting Tool ===")
 
+    # Step 1: Ask for the number of accounts to use
+    account_count = int(input("Enter the number of accounts to use for reporting: "))
+
     # Load proxies
     proxies = load_proxies()
 
-    # Step 1: Retrieve existing sessions
-    existing_sessions = await connect_existing_sessions(proxies)
+    # Step 2: Retrieve existing sessions
+    existing_sessions = await connect_existing_sessions(proxies, account_count)
     existing_count = len(existing_sessions)
 
-    # Step 2: Determine how many accounts are needed
-    account_count = int(input("Enter the number of accounts to use: "))
+    # Step 3: If more accounts are needed, prompt for new logins
     if existing_count >= account_count:
         print(f"There are {existing_count} existing sessions. No need to log in to new accounts.")
         clients = existing_sessions[:account_count]
     else:
         print(f"{existing_count} sessions found in the database. Logging into {account_count - existing_count} new accounts.")
-        new_sessions = await assign_proxies_to_new_sessions(proxies, account_count - existing_count, existing_sessions)
+        new_sessions = await assign_proxies_to_new_sessions(proxies, account_count - existing_count)
         clients = existing_sessions + new_sessions
 
-    # Step 3: Select type of entity to report
+    # Step 4: Select type of entity to report
     print("\nSelect the type of entity to report:")
     print("1 - Group")
     print("2 - Channel")
@@ -159,7 +161,7 @@ async def main():
         print("Invalid input. Exiting.")
         return
 
-    # Step 4: Get the entity and reason
+    # Step 5: Get the entity and reason
     entity = input("Enter the group/channel username or user ID to report: ").strip()
     print("\nAvailable reasons for reporting:")
     for idx, reason in enumerate(REPORT_REASONS.keys(), 1):
@@ -175,7 +177,7 @@ async def main():
         print("Invalid input. Exiting.")
         return
 
-    # Step 5: Get the number of reports
+    # Step 6: Get the number of reports
     try:
         times_to_report = int(input("Enter the number of times to report: "))
         if times_to_report <= 0:
@@ -185,7 +187,7 @@ async def main():
         print("Invalid input. Exiting.")
         return
 
-    # Step 6: Report the entity from all accounts
+    # Step 7: Report the entity from all accounts
     async def report_entity(client):
         entity_peer = await client.get_input_entity(entity)
         message = f"Reported for {reason.capitalize()}."
@@ -196,11 +198,11 @@ async def main():
     for client in clients:
         await report_entity(client)
 
-    # Step 7: Disconnect all clients
+    # Step 8: Disconnect all clients
     for client in clients:
         await client.disconnect()
     print(f"Reports submitted {times_to_report} times. All clients disconnected.")
 
 if __name__ == "__main__":
     asyncio.run(main())
-                
+        
