@@ -1,9 +1,8 @@
 import asyncio
 import random
-import logging
 from telethon import TelegramClient
 from telethon.sessions import StringSession
-from telethon.errors import SessionPasswordNeededError, PhoneCodeRequiredError
+from telethon.errors import SessionPasswordNeededError
 from telethon.tl.functions.account import ReportPeerRequest
 from telethon.tl.types import (
     InputReportReasonSpam,
@@ -11,16 +10,18 @@ from telethon.tl.types import (
     InputReportReasonPornography,
     InputReportReasonChildAbuse,
     InputReportReasonCopyright,
-    InputReportReasonOther
+    InputReportReasonOther,
+    InputPeerChat,
+    InputPeerChannel,
+    InputPeerUser,
 )
 from pymongo import MongoClient
-import socket
+import logging
 
 # Logging setup
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Telegram API credentials
 API_ID = "29872536"
 API_HASH = "65e1f714a47c0879734553dc460e98d6"
 
@@ -43,7 +44,8 @@ REPORT_REASONS = {
     "other": InputReportReasonOther(),
 }
 
-def load_proxies(file_path="proxies.txt"):
+
+def load_proxies(file_path="proxy.txt"):
     """Load proxies from a file."""
     try:
         with open(file_path, "r") as f:
@@ -55,16 +57,6 @@ def load_proxies(file_path="proxies.txt"):
         logger.error(f"Proxy file '{file_path}' not found.")
         return []
 
-def validate_proxy(proxy):
-    """Validate if a proxy is functional."""
-    try:
-        proxy_type, proxy_ip, proxy_port = proxy
-        proxy_port = int(proxy_port)
-        with socket.create_connection((proxy_ip, proxy_port), timeout=5):
-            return True
-    except Exception as e:
-        logger.error(f"Invalid proxy {proxy}: {e}")
-        return False
 
 async def login(phone, proxy=None):
     try:
@@ -153,56 +145,43 @@ async def main():
     # Step 1: Log in to multiple accounts
     account_count = int(input("Enter the number of accounts to use: "))
     clients = []
-    authorized_count = len(sessions_collection.find())
+    for i in range(account_count):
+        phone = input(f"Enter the phone number for account {i + 1} (e.g., +123456789): ")
 
-    if account_count > authorized_count:
-        # Ask for additional phone numbers and OTPs
-        for i in range(account_count - authorized_count):
-            phone = input(f"Enter phone number for new account {i + 1}: ")
-
-            client = await login(phone)
-            if client:
-                clients.append(client)
-            else:
-                print(f"Skipping account {phone} due to login failure.")
-    else:
-        # Use existing sessions
-        logger.info(f"Using {authorized_count} existing session(s).")
-        for i, session_data in enumerate(sessions_collection.find().limit(account_count)):
-            phone = session_data["phone"]
-            client = await login(phone)
+        # No proxy for each account at this point
+        client = await login(phone)
+        if client:
             clients.append(client)
+        else:
+            print(f"Skipping account {phone} due to login failure.")
 
-    # Step 2: Ask if proxies are to be used for all accounts
-    use_proxy = input("Do you want to use proxies for these accounts? (y/n): ").strip().lower()
+    # Step 2: Ask if proxies will be used
+    use_proxy = input("\nDo you want to use proxies for these accounts? (y/n): ").strip().lower()
+    proxies_to_use = []
     if use_proxy == "y" and proxies:
-        # Choose proxies for accounts
-        proxies_to_use = []
+        # Ask the user for each account if proxies are needed
         for i in range(account_count):
-            print(f"\nAccount {clients[i].session.filename}:")
+            print(f"\nAccount {i + 1}:")
             proxy_choice = input(f"Do you want to use a proxy for this account? (y/n): ").strip().lower()
             if proxy_choice == "y":
-                # Select random proxy from available proxies
                 proxy = random.choice(proxies)
-                # Validate the proxy before using it
-                if not validate_proxy(proxy):
-                    logger.error("Selected proxy is invalid, trying another one.")
-                    proxy = random.choice([p for p in proxies if validate_proxy(p)])
+                proxy = (proxy[0].upper(), proxy[1], int(proxy[2]))
+                logger.info(f"Using proxy: {proxy}")
                 proxies_to_use.append(proxy)
             else:
                 proxies_to_use.append(None)
-
-        # Apply the proxies to the respective clients
-        for i, client in enumerate(clients):
-            if proxies_to_use[i]:
-                logger.info(f"Using proxy {proxies_to_use[i]} for account {clients[i].session.filename}.")
-                client.proxy = proxies_to_use[i]
-            else:
-                client.proxy = None
     else:
         logger.info("No proxies will be used.")
 
-    # Step 3: Ask for which entity to report
+    # Apply proxies to each client
+    for i in range(account_count):
+        if proxies_to_use[i]:
+            logger.info(f"Using proxy {proxies_to_use[i]} for account {clients[i].session.filename}.")
+            clients[i].proxy = proxies_to_use[i]
+        else:
+            clients[i].proxy = None
+
+    # Step 3: Select type of entity to report
     print("\nSelect the type of entity to report:")
     print("1 - Group")
     print("2 - Channel")
@@ -253,5 +232,5 @@ async def main():
 
 
 if __name__ == "__main__":
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(main())
+    asyncio.run(main())
+        
