@@ -1,8 +1,9 @@
 import asyncio
 import random
+import logging
 from telethon import TelegramClient
 from telethon.sessions import StringSession
-from telethon.errors import SessionPasswordNeededError
+from telethon.errors import SessionPasswordNeededError, PhoneCodeRequiredError
 from telethon.tl.functions.account import ReportPeerRequest
 from telethon.tl.types import (
     InputReportReasonSpam,
@@ -10,18 +11,16 @@ from telethon.tl.types import (
     InputReportReasonPornography,
     InputReportReasonChildAbuse,
     InputReportReasonCopyright,
-    InputReportReasonOther,
-    InputPeerChat,
-    InputPeerChannel,
-    InputPeerUser,
+    InputReportReasonOther
 )
 from pymongo import MongoClient
-import logging
+import socket
 
 # Logging setup
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Telegram API credentials
 API_ID = "29872536"
 API_HASH = "65e1f714a47c0879734553dc460e98d6"
 
@@ -44,8 +43,7 @@ REPORT_REASONS = {
     "other": InputReportReasonOther(),
 }
 
-
-def load_proxies(file_path="proxy.txt"):
+def load_proxies(file_path="proxies.txt"):
     """Load proxies from a file."""
     try:
         with open(file_path, "r") as f:
@@ -57,6 +55,16 @@ def load_proxies(file_path="proxy.txt"):
         logger.error(f"Proxy file '{file_path}' not found.")
         return []
 
+def validate_proxy(proxy):
+    """Validate if a proxy is functional."""
+    try:
+        proxy_type, proxy_ip, proxy_port = proxy
+        proxy_port = int(proxy_port)
+        with socket.create_connection((proxy_ip, proxy_port), timeout=5):
+            return True
+    except Exception as e:
+        logger.error(f"Invalid proxy {proxy}: {e}")
+        return False
 
 async def login(phone, proxy=None):
     try:
@@ -145,24 +153,56 @@ async def main():
     # Step 1: Log in to multiple accounts
     account_count = int(input("Enter the number of accounts to use: "))
     clients = []
-    for i in range(account_count):
-        phone = input(f"Enter the phone number for account {i + 1} (e.g., +123456789): ")
+    authorized_count = len(sessions_collection.find())
 
-        # Ask if a proxy is required
-        use_proxy = input("Do you want to use a proxy for this account? (y/n): ").strip().lower()
-        proxy = None
-        if use_proxy == "y" and proxies:
-            proxy = random.choice(proxies)
-            proxy = (proxy[0].upper(), proxy[1], int(proxy[2]))
-            logger.info(f"Using proxy: {proxy}")
+    if account_count > authorized_count:
+        # Ask for additional phone numbers and OTPs
+        for i in range(account_count - authorized_count):
+            phone = input(f"Enter phone number for new account {i + 1}: ")
 
-        client = await login(phone, proxy)
-        if client:
+            client = await login(phone)
+            if client:
+                clients.append(client)
+            else:
+                print(f"Skipping account {phone} due to login failure.")
+    else:
+        # Use existing sessions
+        logger.info(f"Using {authorized_count} existing session(s).")
+        for i, session_data in enumerate(sessions_collection.find().limit(account_count)):
+            phone = session_data["phone"]
+            client = await login(phone)
             clients.append(client)
-        else:
-            print(f"Skipping account {phone} due to login failure.")
 
-    # Step 2: Select type of entity to report
+    # Step 2: Ask if proxies are to be used for all accounts
+    use_proxy = input("Do you want to use proxies for these accounts? (y/n): ").strip().lower()
+    if use_proxy == "y" and proxies:
+        # Choose proxies for accounts
+        proxies_to_use = []
+        for i in range(account_count):
+            print(f"\nAccount {clients[i].session.filename}:")
+            proxy_choice = input(f"Do you want to use a proxy for this account? (y/n): ").strip().lower()
+            if proxy_choice == "y":
+                # Select random proxy from available proxies
+                proxy = random.choice(proxies)
+                # Validate the proxy before using it
+                if not validate_proxy(proxy):
+                    logger.error("Selected proxy is invalid, trying another one.")
+                    proxy = random.choice([p for p in proxies if validate_proxy(p)])
+                proxies_to_use.append(proxy)
+            else:
+                proxies_to_use.append(None)
+
+        # Apply the proxies to the respective clients
+        for i, client in enumerate(clients):
+            if proxies_to_use[i]:
+                logger.info(f"Using proxy {proxies_to_use[i]} for account {clients[i].session.filename}.")
+                client.proxy = proxies_to_use[i]
+            else:
+                client.proxy = None
+    else:
+        logger.info("No proxies will be used.")
+
+    # Step 3: Ask for which entity to report
     print("\nSelect the type of entity to report:")
     print("1 - Group")
     print("2 - Channel")
@@ -176,7 +216,7 @@ async def main():
         print("Invalid input. Exiting.")
         return
 
-    # Step 3: Get the entity and reason
+    # Step 4: Get the entity and reason
     entity = input("Enter the group/channel username or user ID to report: ").strip()
     print("\nAvailable reasons for reporting:")
     for idx, reason in enumerate(REPORT_REASONS.keys(), 1):
@@ -192,7 +232,7 @@ async def main():
         print("Invalid input. Exiting.")
         return
 
-    # Step 4: Get the number of reports
+    # Step 5: Get the number of reports
     try:
         times_to_report = int(input("Enter the number of times to report: "))
         if times_to_report <= 0:
@@ -202,16 +242,16 @@ async def main():
         print("Invalid input. Exiting.")
         return
 
-    # Step 5: Report the entity from all accounts
+    # Step 6: Report the entity from all accounts
     for client in clients:
         await report_entity(client, entity, reason, times_to_report)
 
-    # Step 6: Disconnect all clients
+    # Step 7: Disconnect all clients
     for client in clients:
         await client.disconnect()
     print(f"Reports submitted {times_to_report} times. All clients disconnected.")
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
-    
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(main())
