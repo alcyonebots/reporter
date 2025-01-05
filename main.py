@@ -134,20 +134,27 @@ async def main():
     # Load proxies
     proxies = load_proxies()
 
-    # Step 2: Retrieve existing sessions
+    # Step 2: Check existing sessions
+    session_docs = list(sessions_collection.find())
+    existing_count = len(session_docs)
+
+    if existing_count >= account_count:
+        print(f"There are {account_count} existing sessions. No need to log in to new accounts.")
+    else:
+        print(f"{existing_count} sessions found in the database. Please log into {account_count - existing_count} new accounts.")
+
+    # Step 3: Connect existing sessions
     existing_sessions = await connect_existing_sessions(proxies, account_count)
     existing_count = len(existing_sessions)
 
-    # Step 3: If more accounts are needed, prompt for new logins
-    if existing_count >= account_count:
-        print(f"There are {existing_count} existing sessions. No need to log in to new accounts.")
-        clients = existing_sessions[:account_count]
-    else:
-        print(f"{existing_count} sessions found in the database. Logging into {account_count - existing_count} new accounts.")
+    # Step 4: If more accounts are needed, prompt for new logins
+    if existing_count < account_count:
         new_sessions = await assign_proxies_to_new_sessions(proxies, account_count - existing_count)
         clients = existing_sessions + new_sessions
+    else:
+        clients = existing_sessions
 
-    # Step 4: Select type of entity to report
+    # Step 5: Select type of entity to report
     print("\nSelect the type of entity to report:")
     print("1 - Group")
     print("2 - Channel")
@@ -161,7 +168,7 @@ async def main():
         print("Invalid input. Exiting.")
         return
 
-    # Step 5: Get the entity and reason
+    # Step 6: Get the entity and reason
     entity = input("Enter the group/channel username or user ID to report: ").strip()
     print("\nAvailable reasons for reporting:")
     for idx, reason in enumerate(REPORT_REASONS.keys(), 1):
@@ -177,7 +184,7 @@ async def main():
         print("Invalid input. Exiting.")
         return
 
-    # Step 6: Get the number of reports
+    # Step 7: Get the number of reports
     try:
         times_to_report = int(input("Enter the number of times to report: "))
         if times_to_report <= 0:
@@ -187,7 +194,7 @@ async def main():
         print("Invalid input. Exiting.")
         return
 
-    # Step 7: Report the entity from all accounts
+    # Step 8: Report the entity from all accounts
     async def report_entity(client):
         entity_peer = await client.get_input_entity(entity)
         message = f"Reported for {reason.capitalize()}."
@@ -198,11 +205,10 @@ async def main():
     for client in clients:
         await report_entity(client)
 
-    # Step 8: Disconnect all clients
+    # Step 9: Disconnect all clients
     for client in clients:
         await client.disconnect()
     print(f"Reports submitted {times_to_report} times. All clients disconnected.")
 
 if __name__ == "__main__":
     asyncio.run(main())
-        
