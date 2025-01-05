@@ -1,5 +1,5 @@
 import asyncio
-import random
+import logging
 from telethon import TelegramClient
 from telethon.sessions import StringSession
 from telethon.errors import SessionPasswordNeededError
@@ -16,7 +16,6 @@ from telethon.tl.types import (
     InputPeerUser,
 )
 from pymongo import MongoClient
-import logging
 
 # Logging setup
 logging.basicConfig(level=logging.INFO)
@@ -101,26 +100,17 @@ async def login(phone, proxy=None):
         logger.error(f"An error occurred during login for account {phone}: {str(e)}")
         return None
 
-async def login_with_proxy(phone, proxies, max_attempts_per_proxy=2):
-    """Attempt to log in using proxies, switching proxies after 2 failed attempts."""
-    for proxy_index, proxy in enumerate(proxies):
-        attempts = 0
-        while attempts < max_attempts_per_proxy:
-            try:
-                formatted_proxy = (proxy[0].upper(), proxy[1], int(proxy[2]))
-                logger.info(f"Attempt {attempts + 1}/{max_attempts_per_proxy} for {phone} using proxy: {formatted_proxy}")
-
-                client = await login(phone, proxy=formatted_proxy)
-                if client:
-                    logger.info(f"Successfully logged in for {phone} using proxy: {formatted_proxy}")
-                    return client
-            except Exception as e:
-                attempts += 1
-                logger.error(f"Attempt {attempts} failed for {phone} using proxy {proxy}: {str(e)}")
-
-        logger.warning(f"Switching to the next proxy for {phone} after {max_attempts_per_proxy} failed attempts.")
-
-    logger.error(f"All proxies failed for {phone}. Skipping account.")
+async def login_with_proxy(phone, proxy):
+    """Log in using a specific proxy."""
+    try:
+        formatted_proxy = (proxy[0].upper(), proxy[1], int(proxy[2]))
+        logger.info(f"Attempting login for {phone} using proxy: {formatted_proxy}")
+        client = await login(phone, proxy=formatted_proxy)
+        if client:
+            logger.info(f"Successfully logged in for {phone} using proxy: {formatted_proxy}")
+            return client
+    except Exception as e:
+        logger.error(f"Failed to log in for {phone} using proxy {proxy}: {str(e)}")
     return None
 
 async def report_entity(client, entity, reason, times_to_report):
@@ -160,26 +150,34 @@ async def main():
     # Step 1: Log in to multiple accounts
     account_count = int(input("Enter the number of accounts to use: "))
 
-    # Ask if proxies should be used
-    use_proxies = input("Do you want to use proxies? (y/n): ").strip().lower()
-    proxies = load_proxies() if use_proxies == "y" else None
-    if use_proxies == "y" and not proxies:
-        print("No proxies found in 'proxy.txt'. Proceeding without proxies.")
-        use_proxies = "n"
+    # Load proxies
+    proxies = load_proxies()
+    if not proxies:
+        print("No proxies found in 'proxy.txt'. Exiting.")
+        return
+
+    # Ensure there are enough proxies for accounts
+    if len(proxies) < account_count:
+        print(f"Not enough proxies available. Required: {account_count}, Available: {len(proxies)}")
+        return
 
     clients = []
     for i in range(account_count):
         phone = input(f"Enter the phone number for account {i + 1} (e.g., +123456789): ")
 
-        if use_proxies == "y":
-            client = await login_with_proxy(phone, proxies)
-        else:
-            client = await login(phone)
+        # Assign a unique proxy to each account
+        proxy = proxies[i % len(proxies)]
+        client = await login_with_proxy(phone, proxy)
 
         if client:
             clients.append(client)
         else:
             print(f"Skipping account {phone} due to login failure.")
+
+    # Proceed with reporting if at least one client is logged in
+    if not clients:
+        print("No accounts logged in successfully. Exiting.")
+        return
 
     # Step 2: Select type of entity to report
     print("\nSelect the type of entity to report:")
@@ -232,4 +230,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-            
+        
