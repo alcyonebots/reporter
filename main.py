@@ -1,7 +1,7 @@
 import asyncio
 from telethon import TelegramClient
 from telethon.sessions import StringSession
-from telethon.errors import PhoneCodeRequiredError, SessionPasswordNeededError
+from telethon.errors import SessionPasswordNeededError
 from telethon.tl.functions.account import ReportPeerRequest
 from telethon.tl.types import (
     InputReportReasonSpam,
@@ -82,12 +82,16 @@ async def login(phone):
 
         return client
 
+    except SessionPasswordNeededError:
+        logger.error(f"2FA is enabled. Please enter the 2FA password for account {phone}.")
+        password = input(f"Enter the 2FA password for {phone}: ")
+        await client.sign_in(password=password)
     except Exception as e:
         logger.error(f"An error occurred during login for account {phone}: {str(e)}")
         return None
 
 
-async def report_entity(client, entity, reason):
+async def report_entity(client, entity, reason, times_to_report):
     try:
         if reason not in REPORT_REASONS:
             logger.error(f"Invalid report reason: {reason}")
@@ -98,8 +102,9 @@ async def report_entity(client, entity, reason):
 
         # Check if entity is valid
         if isinstance(entity_peer, (InputPeerChat, InputPeerChannel, InputPeerUser)):
-            result = await client(ReportPeerRequest(entity_peer, REPORT_REASONS[reason]))
-            logger.info(f"Successfully reported {entity} for {reason}. Result: {result}")
+            for _ in range(times_to_report):
+                result = await client(ReportPeerRequest(entity_peer, REPORT_REASONS[reason]))
+                logger.info(f"Successfully reported {entity} for {reason}. Result: {result}")
         else:
             logger.error(f"Invalid entity type for reporting: {type(entity_peer).__name__}")
 
@@ -151,14 +156,24 @@ async def main():
         print("Invalid input. Exiting.")
         return
 
-    # Step 4: Report the entity from all accounts
-    for client in clients:
-        await report_entity(client, entity, reason)
+    # Step 4: Get the number of reports
+    try:
+        times_to_report = int(input("Enter the number of times to report: "))
+        if times_to_report <= 0:
+            print("Number of reports must be greater than 0. Exiting.")
+            return
+    except ValueError:
+        print("Invalid input. Exiting.")
+        return
 
-    # Step 5: Disconnect all clients
+    # Step 5: Report the entity from all accounts
+    for client in clients:
+        await report_entity(client, entity, reason, times_to_report)
+
+    # Step 6: Disconnect all clients
     for client in clients:
         await client.disconnect()
-    print("Reports submitted. All clients disconnected.")
+    print(f"Reports submitted {times_to_report} times. All clients disconnected.")
 
 
 if __name__ == "__main__":
