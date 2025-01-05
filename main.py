@@ -102,15 +102,25 @@ async def report_entity(client, entity, reason, times_to_report):
 
         # Check if entity is valid
         if isinstance(entity_peer, (InputPeerChat, InputPeerChannel, InputPeerUser)):
+            # Define a default message for each report reason
+            default_messages = {
+                "spam": "This is spam.",
+                "violence": "This content promotes violence.",
+                "pornography": "This content contains pornography.",
+                "child abuse": "This content is related to child abuse.",
+                "copyright infringement": "This content infringes on copyright.",
+                "other": "This is an inappropriate entity.",
+            }
+            message = default_messages.get(reason, "This is a reported entity.")
+            
             for _ in range(times_to_report):
-                result = await client(ReportPeerRequest(entity_peer, REPORT_REASONS[reason]))
+                result = await client(ReportPeerRequest(entity_peer, REPORT_REASONS[reason], message))
                 logger.info(f"Successfully reported {entity} for {reason}. Result: {result}")
         else:
             logger.error(f"Invalid entity type for reporting: {type(entity_peer).__name__}")
 
     except Exception as e:
         logger.error(f"Failed to report {entity}: {str(e)}")
-
 
 async def main():
     print("=== Telegram Multi-Account Reporting Tool ===")
