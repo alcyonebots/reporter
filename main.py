@@ -1,145 +1,166 @@
-import logging
 import asyncio
 from telethon import TelegramClient
-from telethon.errors import ChatAdminRequiredError, SessionPasswordNeededError, PhoneCodeInvalidError
-from telethon.tl.functions.account import ReportPeerRequest
-from telethon.tl.types import InputReportReasonSpam, InputReportReasonViolence, InputReportReasonPornography, InputReportReasonChildAbuse, InputReportReasonCopyright, InputReportReasonFake, InputReportReasonOther
 from telethon.sessions import StringSession
+from telethon.errors import PhoneCodeRequiredError, SessionPasswordNeededError
+from telethon.tl.functions.account import ReportPeerRequest
+from telethon.tl.types import (
+    InputReportReasonSpam,
+    InputReportReasonViolence,
+    InputReportReasonPornography,
+    InputReportReasonChildAbuse,
+    InputReportReasonCopyright,
+    InputReportReasonOther,
+    InputPeerChat,
+    InputPeerChannel,
+    InputPeerUser,
+)
+from pymongo import MongoClient
+import logging
 
 # Logging setup
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Bot configuration
-API_ID = "29872536"  # Your API ID
-API_HASH = "65e1f714a47c0879734553dc460e98d6"  # Your API Hash
+# Telegram API credentials
+API_ID = "29872536"
+API_HASH = "65e1f714a47c0879734553dc460e98d6"
 
-# Accounts configuration
-ACCOUNTS = [
-    {"phone": "+919108454466", "report_count": 0, "client": None, "string_session": None},
-    {"phone": "+918329056828", "report_count": 0, "client": None, "string_session": None},
-    # Add more accounts here if needed
-]
+# MongoDB connection
+MONGO_URI = "mongodb+srv://denji3494:denji3494@cluster0.bskf1po.mongodb.net/"
+DB_NAME = "reporter"
+COLLECTION_NAME = "sessions"
 
-# Report reasons mapping
+client = MongoClient(MONGO_URI)
+db = client[DB_NAME]
+sessions_collection = db[COLLECTION_NAME]
+
+# Reasons for reporting
 REPORT_REASONS = {
     "spam": InputReportReasonSpam(),
     "violence": InputReportReasonViolence(),
     "pornography": InputReportReasonPornography(),
     "child abuse": InputReportReasonChildAbuse(),
-    "copyright": InputReportReasonCopyright(),
-    "fake": InputReportReasonFake(),
+    "copyright infringement": InputReportReasonCopyright(),
     "other": InputReportReasonOther(),
 }
 
-# Initialize clients and load sessions
-def initialize_clients():
-    for account in ACCOUNTS:
-        # Create a new client for each account (ensure it's not using old sessions)
-        account["client"] = TelegramClient(StringSession(), API_ID, API_HASH)
-        logger.info(f"Client for {account['phone']} initialized.")
-
-# Function to handle OTP and 2FA
-async def handle_otp(account, client):
+# MongoDB function to manage sessions
+async def login(phone):
     try:
-        # Attempt to start the client; it will prompt for OTP if required
-        await client.start(phone=account["phone"])
-    except PhoneCodeInvalidError:  # OTP required
-        logger.info(f"OTP required for {account['phone']}. Please provide the OTP.")
-        otp = input(f"Enter OTP for {account['phone']}: ")
-        await client.start(phone=account["phone"], code=otp)
-    except SessionPasswordNeededError:  # 2FA required
-        logger.info(f"2FA required for {account['phone']}. Please provide the password.")
-        password = input(f"Enter 2FA password for {account['phone']}: ")
-        await client.start(phone=account["phone"], password=password)
+        # Check if session exists in the database
+        session_data = sessions_collection.find_one({"phone": phone})
+        if session_data:
+            session_string = session_data["session_string"]
+            client = TelegramClient(StringSession(session_string), API_ID, API_HASH)
+        else:
+            client = TelegramClient(f'session_{phone}', API_ID, API_HASH)
 
-# Reporting a group
-async def report_group(account, group_link, reason_text, times_to_report):
-    try:
-        reason = REPORT_REASONS.get(reason_text.lower(), None)
-        if not reason:
-            return "Invalid reason. Please choose from 'spam', 'violence', 'pornography', 'child abuse', 'copyright', 'fake', or 'other'."
-        
-        # Get the group chat by link
-        group = await account["client"].get_entity(group_link)
-        
-        # Check if bot is a member of the group
-        try:
-            await account["client"](JoinChannelRequest(group))
-        except Exception as e:
-            logger.error(f"Error joining group {group_link}: {e}")
-            return f"Error: Could not join group {group_link}. Please make sure the group is public or the bot is already a member."
+        await client.connect()
 
-        # Report the group for the specified number of times
-        for _ in range(times_to_report):
-            await account["client"](ReportPeerRequest(group, reason))
-            account["report_count"] += 1
+        # Check if already authorized
+        if not await client.is_user_authorized():
+            logger.info(f"Account {phone} is not authorized. Logging in...")
+            await client.send_code_request(phone)
+            otp = input(f"Enter the OTP for {phone}: ")
+            await client.sign_in(phone, otp)
 
-        return f"Successfully reported {group_link} for {reason_text} {times_to_report} times. Total reports by this account: {account['report_count']}."
-    
-    except ChatAdminRequiredError:
-        return "Error: You must be an admin to report this group."
+            # Handle 2FA if enabled
+            if not await client.is_user_authorized():
+                password = input(f"Enter the 2FA password for {phone}: ")
+                await client.sign_in(password=password)
+
+            # Save the session string to MongoDB
+            session_string = StringSession.save(client.session)
+            sessions_collection.update_one(
+                {"phone": phone},
+                {"$set": {"session_string": session_string}},
+                upsert=True,
+            )
+            logger.info(f"Session saved for account {phone}.")
+        else:
+            logger.info(f"Account {phone} is already authorized.")
+
+        return client
+
     except Exception as e:
-        logger.error(f"Error while reporting group {group_link}: {e}")
-        return f"Error: {e}"
+        logger.error(f"An error occurred during login for account {phone}: {str(e)}")
+        return None
 
-# Command to report a group
-def report(update, context):
-    if len(context.args) < 3:
-        update.message.reply_text("Usage: /report <group_link> <reason> <number_of_reports>")
-        return
 
-    group_link = context.args[0]
-    reason_text = context.args[1]
+async def report_entity(client, entity, reason):
     try:
-        times_to_report = int(context.args[2])
+        if reason not in REPORT_REASONS:
+            logger.error(f"Invalid report reason: {reason}")
+            return
+
+        # Resolve entity to InputPeer
+        entity_peer = await client.get_input_entity(entity)
+
+        # Check if entity is valid
+        if isinstance(entity_peer, (InputPeerChat, InputPeerChannel, InputPeerUser)):
+            result = await client(ReportPeerRequest(entity_peer, REPORT_REASONS[reason]))
+            logger.info(f"Successfully reported {entity} for {reason}. Result: {result}")
+        else:
+            logger.error(f"Invalid entity type for reporting: {type(entity_peer).__name__}")
+
+    except Exception as e:
+        logger.error(f"Failed to report {entity}: {str(e)}")
+
+
+async def main():
+    print("=== Telegram Multi-Account Reporting Tool ===")
+
+    # Step 1: Log in to multiple accounts
+    account_count = int(input("Enter the number of accounts to use: "))
+    clients = []
+    for i in range(account_count):
+        phone = input(f"Enter the phone number for account {i + 1} (e.g., +123456789): ")
+        client = await login(phone)
+        if client:
+            clients.append(client)
+        else:
+            print(f"Skipping account {phone} due to login failure.")
+
+    # Step 2: Select type of entity to report
+    print("\nSelect the type of entity to report:")
+    print("1 - Group")
+    print("2 - Channel")
+    print("3 - User")
+    try:
+        choice = int(input("Enter your choice (1/2/3): "))
+        if choice not in [1, 2, 3]:
+            print("Invalid choice. Exiting.")
+            return
     except ValueError:
-        update.message.reply_text("Invalid number of reports. Please provide a valid integer.")
+        print("Invalid input. Exiting.")
         return
 
-    # Find the account with the lowest report count
-    account = min(ACCOUNTS, key=lambda acc: acc["report_count"])
+    # Step 3: Get the entity and reason
+    entity = input("Enter the group/channel username or user ID to report: ").strip()
+    print("\nAvailable reasons for reporting:")
+    for idx, reason in enumerate(REPORT_REASONS.keys(), 1):
+        print(f"{idx} - {reason.capitalize()}")
+    try:
+        reason_choice = int(input("Enter your choice (1-{}): ".format(len(REPORT_REASONS))))
+        reason_map = list(REPORT_REASONS.keys())
+        if reason_choice < 1 or reason_choice > len(reason_map):
+            print("Invalid reason choice. Exiting.")
+            return
+        reason = reason_map[reason_choice - 1]
+    except ValueError:
+        print("Invalid input. Exiting.")
+        return
 
-    # Run the report asynchronously
-    result = asyncio.run(report_group(account, group_link, reason_text, times_to_report))
-    update.message.reply_text(result)
+    # Step 4: Report the entity from all accounts
+    for client in clients:
+        await report_entity(client, entity, reason)
 
-    # Inform if an account has reported 10 times
-    if account["report_count"] >= 10:
-        update.message.reply_text(f"Account {account['phone']} has reported 10 times!")
+    # Step 5: Disconnect all clients
+    for client in clients:
+        await client.disconnect()
+    print("Reports submitted. All clients disconnected.")
 
-    # Save the string session for the account
-    account["string_session"] = account["client"].session.save()
-
-# Command to show stats
-def stats(update, context):
-    stats_msg = "Report Stats:\n"
-    for account in ACCOUNTS:
-        stats_msg += f"Account {account['phone']}: {account['report_count']} reports\n"
-    update.message.reply_text(stats_msg)
-
-# Function to handle start command
-def start(update, context):
-    update.message.reply_text("Welcome! Send /report <group_link> <reason> <number_of_reports> to report a group.\nSend /stats to see report stats.")
-
-# Main function to set up the bot
-def main():
-    # Initialize clients and load sessions
-    initialize_clients()
-
-    # Set up the updater and dispatcher
-    updater = Updater("8077898847:AAHteiAz12NWkO096hBmkEIoqAjk0--DtEk", use_context=True)
-    dispatcher = updater.dispatcher
-
-    # Set up handlers
-    dispatcher.add_handler(CommandHandler("start", start))
-    dispatcher.add_handler(CommandHandler("report", report))
-    dispatcher.add_handler(CommandHandler("stats", stats))
-
-    # Start the bot
-    updater.start_polling()
-    updater.idle()
 
 if __name__ == "__main__":
-    main()
-        
+    asyncio.run(main())
+            
