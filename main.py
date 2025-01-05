@@ -1,4 +1,5 @@
 import asyncio
+import random
 from telethon import TelegramClient
 from telethon.sessions import StringSession
 from telethon.errors import SessionPasswordNeededError
@@ -21,7 +22,6 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Telegram API credentials
 API_ID = "29872536"
 API_HASH = "65e1f714a47c0879734553dc460e98d6"
 
@@ -44,16 +44,29 @@ REPORT_REASONS = {
     "other": InputReportReasonOther(),
 }
 
-# MongoDB function to manage sessions
-async def login(phone):
+
+def load_proxies(file_path="proxy.txt"):
+    """Load proxies from a file."""
+    try:
+        with open(file_path, "r") as f:
+            proxies = [
+                tuple(line.strip().split(",")) for line in f.readlines() if line.strip()
+            ]
+        return proxies
+    except FileNotFoundError:
+        logger.error(f"Proxy file '{file_path}' not found.")
+        return []
+
+
+async def login(phone, proxy=None):
     try:
         # Check if session exists in the database
         session_data = sessions_collection.find_one({"phone": phone})
         if session_data:
             session_string = session_data["session_string"]
-            client = TelegramClient(StringSession(session_string), API_ID, API_HASH)
+            client = TelegramClient(StringSession(session_string), API_ID, API_HASH, proxy=proxy)
         else:
-            client = TelegramClient(f'session_{phone}', API_ID, API_HASH)
+            client = TelegramClient(f'session_{phone}', API_ID, API_HASH, proxy=proxy)
 
         await client.connect()
 
@@ -122,15 +135,28 @@ async def report_entity(client, entity, reason, times_to_report):
     except Exception as e:
         logger.error(f"Failed to report {entity}: {str(e)}")
 
+
 async def main():
     print("=== Telegram Multi-Account Reporting Tool ===")
+
+    # Load proxies
+    proxies = load_proxies()
 
     # Step 1: Log in to multiple accounts
     account_count = int(input("Enter the number of accounts to use: "))
     clients = []
     for i in range(account_count):
         phone = input(f"Enter the phone number for account {i + 1} (e.g., +123456789): ")
-        client = await login(phone)
+
+        # Ask if a proxy is required
+        use_proxy = input("Do you want to use a proxy for this account? (y/n): ").strip().lower()
+        proxy = None
+        if use_proxy == "y" and proxies:
+            proxy = random.choice(proxies)
+            proxy = (proxy[0].upper(), proxy[1], int(proxy[2]))
+            logger.info(f"Using proxy: {proxy}")
+
+        client = await login(phone, proxy)
         if client:
             clients.append(client)
         else:
@@ -188,4 +214,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-            
+    
