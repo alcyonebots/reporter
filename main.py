@@ -44,7 +44,6 @@ REPORT_REASONS = {
     "other": InputReportReasonOther(),
 }
 
-
 def load_proxies(file_path="proxy.txt"):
     """Load proxies from a file."""
     try:
@@ -56,7 +55,6 @@ def load_proxies(file_path="proxy.txt"):
     except FileNotFoundError:
         logger.error(f"Proxy file '{file_path}' not found.")
         return []
-
 
 async def login(phone, proxy=None):
     try:
@@ -103,6 +101,28 @@ async def login(phone, proxy=None):
         logger.error(f"An error occurred during login for account {phone}: {str(e)}")
         return None
 
+async def login_with_proxy(phone, proxies, max_attempts=2):
+    """Attempt to log in using different proxies until successful."""
+    attempt = 0
+    client = None
+    while attempt < max_attempts:
+        try:
+            proxy = proxies[attempt % len(proxies)]
+            proxy = (proxy[0].upper(), proxy[1], int(proxy[2]))  # Format proxy tuple
+            logger.info(f"Attempting login for {phone} using proxy: {proxy}")
+
+            client = await login(phone, proxy=proxy)
+            if client:
+                logger.info(f"Successfully logged in for {phone} using proxy: {proxy}")
+                return client
+        except Exception as e:
+            logger.error(f"Login failed for {phone} using proxy {proxy}: {str(e)}")
+
+        attempt += 1
+        logger.warning(f"Retrying with a different proxy for {phone} (Attempt {attempt}/{max_attempts}).")
+
+    logger.error(f"All proxy attempts failed for {phone}. Skipping account.")
+    return None
 
 async def report_entity(client, entity, reason, times_to_report):
     try:
@@ -135,53 +155,28 @@ async def report_entity(client, entity, reason, times_to_report):
     except Exception as e:
         logger.error(f"Failed to report {entity}: {str(e)}")
 
-
 async def main():
     print("=== Telegram Multi-Account Reporting Tool ===")
 
     # Load proxies
     proxies = load_proxies()
+    if not proxies:
+        print("No proxies found in 'proxy.txt'. Proceeding without proxies.")
+    else:
+        print(f"{len(proxies)} proxies loaded.")
 
     # Step 1: Log in to multiple accounts
     account_count = int(input("Enter the number of accounts to use: "))
     clients = []
     for i in range(account_count):
         phone = input(f"Enter the phone number for account {i + 1} (e.g., +123456789): ")
-
-        # No proxy for each account at this point
-        client = await login(phone)
+        client = await login_with_proxy(phone, proxies)
         if client:
             clients.append(client)
         else:
             print(f"Skipping account {phone} due to login failure.")
 
-    # Step 2: Ask if proxies will be used
-    use_proxy = input("\nDo you want to use proxies for these accounts? (y/n): ").strip().lower()
-    proxies_to_use = []
-    if use_proxy == "y" and proxies:
-        # Ask the user for each account if proxies are needed
-        for i in range(account_count):
-            print(f"\nAccount {i + 1}:")
-            proxy_choice = input(f"Do you want to use a proxy for this account? (y/n): ").strip().lower()
-            if proxy_choice == "y":
-                proxy = random.choice(proxies)
-                proxy = (proxy[0].upper(), proxy[1], int(proxy[2]))
-                logger.info(f"Using proxy: {proxy}")
-                proxies_to_use.append(proxy)
-            else:
-                proxies_to_use.append(None)
-    else:
-        logger.info("No proxies will be used.")
-
-    # Apply proxies to each client
-    for i in range(account_count):
-        if proxies_to_use[i]:
-            logger.info(f"Using proxy {proxies_to_use[i]} for account {clients[i].session.filename}.")
-            clients[i].proxy = proxies_to_use[i]
-        else:
-            clients[i].proxy = None
-
-    # Step 3: Select type of entity to report
+    # Step 2: Select type of entity to report
     print("\nSelect the type of entity to report:")
     print("1 - Group")
     print("2 - Channel")
@@ -195,7 +190,7 @@ async def main():
         print("Invalid input. Exiting.")
         return
 
-    # Step 4: Get the entity and reason
+    # Step 3: Get the entity and reason
     entity = input("Enter the group/channel username or user ID to report: ").strip()
     print("\nAvailable reasons for reporting:")
     for idx, reason in enumerate(REPORT_REASONS.keys(), 1):
@@ -211,7 +206,7 @@ async def main():
         print("Invalid input. Exiting.")
         return
 
-    # Step 5: Get the number of reports
+    # Step 4: Get the number of reports
     try:
         times_to_report = int(input("Enter the number of times to report: "))
         if times_to_report <= 0:
@@ -221,16 +216,15 @@ async def main():
         print("Invalid input. Exiting.")
         return
 
-    # Step 6: Report the entity from all accounts
+    # Step 5: Report the entity from all accounts
     for client in clients:
         await report_entity(client, entity, reason, times_to_report)
 
-    # Step 7: Disconnect all clients
+    # Step 6: Disconnect all clients
     for client in clients:
         await client.disconnect()
     print(f"Reports submitted {times_to_report} times. All clients disconnected.")
 
-
 if __name__ == "__main__":
     asyncio.run(main())
-        
+            
