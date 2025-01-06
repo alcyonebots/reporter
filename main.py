@@ -2,7 +2,6 @@ import asyncio
 import logging
 from telethon import TelegramClient
 from telethon.sessions import StringSession
-from telethon.errors import SessionPasswordNeededError
 from telethon.tl.functions.account import ReportPeerRequest
 from telethon.tl.types import (
     InputReportReasonSpam,
@@ -84,7 +83,7 @@ async def login(phone, proxy=None):
         await client.connect()
 
         if not await client.is_user_authorized():
-            logger.info(f"Account {phone} is not authorized. Logging in...")
+            print(f"\n[!] Account {phone} is not authorized. Logging in...")
             await client.send_code_request(phone)
             otp = input(f"Enter the OTP for {phone}: ")
             await client.sign_in(phone, otp)
@@ -101,14 +100,14 @@ async def login(phone, proxy=None):
                 {"$set": {"session_string": session_string}},
                 upsert=True,
             )
-            logger.info(f"Session saved for account {phone}.")
+            print(f"[✓] Session saved for account {phone}.")
         else:
-            logger.info(f"Account {phone} is already authorized.")
+            print(f"[✓] Account {phone} is already authorized.")
 
         return client
 
     except Exception as e:
-        logger.error(f"An error occurred during login for account {phone}: {str(e)}")
+        print(f"[!] Error during login for account {phone}: {str(e)}")
         return None
 
 async def assign_proxies_to_new_sessions(proxies, accounts_needed):
@@ -121,103 +120,86 @@ async def assign_proxies_to_new_sessions(proxies, accounts_needed):
 
         client = await login(phone, proxy=formatted_proxy)
         if client:
-            logger.info(f"Logged in to new account {phone} using proxy: {formatted_proxy}")
+            print(f"[✓] Logged in to new account {phone} using proxy: {formatted_proxy}")
             new_sessions.append(client)
     return new_sessions
 
+async def report_entity(client, entity, reason, times_to_report):
+    try:
+        if reason not in REPORT_REASONS:
+            logger.error(f"Invalid report reason: {reason}")
+            return 0
+
+        entity_peer = await client.get_input_entity(entity)
+        default_messages = {
+            "spam": "This is spam.",
+            "violence": "This content promotes violence.",
+            "pornography": "This content contains pornography.",
+            "child abuse": "This content is related to child abuse.",
+            "copyright infringement": "This content infringes on copyright.",
+            "other": "This is an inappropriate entity.",
+        }
+        message = default_messages.get(reason, "This is a reported entity.")
+        successful_reports = 0
+
+        for _ in range(times_to_report):
+            result = await client(ReportPeerRequest(entity_peer, REPORT_REASONS[reason], message))
+            if result:
+                successful_reports += 1
+                print(f"[✓] Reported {entity} for {reason}.")
+            else:
+                print(f"[✗] Failed to report {entity}.")
+
+        return successful_reports
+
+    except Exception as e:
+        logger.error(f"Failed to report {entity}: {str(e)}")
+        return 0
+
 async def main():
-    print("=== Telegram Multi-Account Reporting Tool ===")
+    print("\n=== Telegram Multi-Account Reporting Tool ===")
+    print("\nThis tool helps you report entities using multiple Telegram accounts.\n")
 
-    # Step 1: Ask for the number of accounts to use
     account_count = int(input("Enter the number of accounts to use for reporting: "))
-
-    # Load proxies
     proxies = load_proxies()
 
-    # Step 2: Check existing sessions
     session_docs = list(sessions_collection.find())
     existing_count = len(session_docs)
 
     if existing_count >= account_count:
-        print(f"There are {account_count} existing sessions. No need to log in to new accounts.")
+        print(f"\n[✓] There are {account_count} existing sessions. No new accounts required.")
+        clients = await connect_existing_sessions(proxies, account_count)
     else:
-        print(f"{existing_count} sessions found in the database. Please log into {account_count - existing_count} new accounts.")
+        print(f"\n[✓] {existing_count} sessions found in the database.")
+        new_accounts_needed = account_count - existing_count
+        print(f"[!] Please log in to {new_accounts_needed} new accounts.")
+        existing_clients = await connect_existing_sessions(proxies, existing_count)
+        new_clients = await assign_proxies_to_new_sessions(proxies, new_accounts_needed)
+        clients = existing_clients + new_clients
 
-    # Step 3: Connect existing sessions
-    existing_sessions = await connect_existing_sessions(proxies, account_count)
-    existing_count = len(existing_sessions)
-
-    # Step 4: If more accounts are needed, prompt for new logins
-    if existing_count < account_count:
-        new_sessions = await assign_proxies_to_new_sessions(proxies, account_count - existing_count)
-        clients = existing_sessions + new_sessions
-    else:
-        clients = existing_sessions
-
-    # Step 5: Select type of entity to report
     print("\nSelect the type of entity to report:")
     print("1 - Group")
     print("2 - Channel")
     print("3 - User")
-    try:
-        choice = int(input("Enter your choice (1/2/3): "))
-        if choice not in [1, 2, 3]:
-            print("Invalid choice. Exiting.")
-            return
-    except ValueError:
-        print("Invalid input. Exiting.")
-        return
-
-    # Step 6: Get the entity and reason
+    choice = int(input("Enter your choice (1/2/3): "))
     entity = input("Enter the group/channel username or user ID to report: ").strip()
     print("\nAvailable reasons for reporting:")
     for idx, reason in enumerate(REPORT_REASONS.keys(), 1):
         print(f"{idx} - {reason.capitalize()}")
-    try:
-        reason_choice = int(input("Enter your choice (1-{}): ".format(len(REPORT_REASONS))))
-        reason_map = list(REPORT_REASONS.keys())
-        if reason_choice < 1 or reason_choice > len(reason_map):
-            print("Invalid reason choice. Exiting.")
-            return
-        reason = reason_map[reason_choice - 1]
-    except ValueError:
-        print("Invalid input. Exiting.")
-        return
+    reason_choice = int(input("Enter your choice: "))
+    reason = list(REPORT_REASONS.keys())[reason_choice - 1]
 
-    # Step 7: Get the number of reports
-    try:
-        times_to_report = int(input("Enter the number of times to report: "))
-        if times_to_report <= 0:
-            print("Number of reports must be greater than 0. Exiting.")
-            return
-    except ValueError:
-        print("Invalid input. Exiting.")
-        return
-
-    # Step 8: Report the entity from all accounts
-    successful_reports = 0
-
-    async def report_entity(client):
-        nonlocal successful_reports
-        try:
-            entity_peer = await client.get_input_entity(entity)
-            message = f"Reported for {reason.capitalize()}."
-            for _ in range(times_to_report):
-                await client(ReportPeerRequest(entity_peer, REPORT_REASONS[reason], message))
-                logger.info(f"Successfully reported {entity} for {reason}.")
-                successful_reports += 1
-        except Exception as e:
-            logger.error(f"Failed to report {entity}: {str(e)}")
+    times_to_report = int(input("Enter the number of times to report: "))
+    total_successful_reports = 0
 
     for client in clients:
-        await report_entity(client)
+        successful_reports = await report_entity(client, entity, reason, times_to_report)
+        total_successful_reports += successful_reports
 
-    # Step 9: Disconnect all clients
+    print(f"\n[✓] Total successful reports submitted: {total_successful_reports}")
+
     for client in clients:
         await client.disconnect()
 
-    print(f"Reports submitted: {successful_reports} successful reports.")
-
 if __name__ == "__main__":
     asyncio.run(main())
-        
