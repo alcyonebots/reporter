@@ -195,12 +195,19 @@ async def main():
         return
 
     # Step 8: Report the entity from all accounts
+    successful_reports = 0
+
     async def report_entity(client):
-        entity_peer = await client.get_input_entity(entity)
-        message = f"Reported for {reason.capitalize()}."
-        for _ in range(times_to_report):
-            await client(ReportPeerRequest(entity_peer, REPORT_REASONS[reason], message))
-        logger.info(f"Successfully reported {entity} for {reason}.")
+        nonlocal successful_reports
+        try:
+            entity_peer = await client.get_input_entity(entity)
+            message = f"Reported for {reason.capitalize()}."
+            for _ in range(times_to_report):
+                await client(ReportPeerRequest(entity_peer, REPORT_REASONS[reason], message))
+                logger.info(f"Successfully reported {entity} for {reason}.")
+                successful_reports += 1
+        except Exception as e:
+            logger.error(f"Failed to report {entity}: {str(e)}")
 
     for client in clients:
         await report_entity(client)
@@ -208,7 +215,9 @@ async def main():
     # Step 9: Disconnect all clients
     for client in clients:
         await client.disconnect()
-    print(f"Reports submitted {times_to_report} times. All clients disconnected.")
+
+    print(f"Reports submitted: {successful_reports} successful reports.")
 
 if __name__ == "__main__":
     asyncio.run(main())
+        
