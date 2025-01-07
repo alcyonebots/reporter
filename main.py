@@ -10,14 +10,14 @@ from telethon.tl.types import (
     InputReportReasonChildAbuse,
     InputReportReasonCopyright,
     InputReportReasonOther,
-    InputPeerChat,
-    InputPeerChannel,
-    InputPeerUser,
 )
 from pymongo import MongoClient
 
 # Logging setup
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s"
+)
 logger = logging.getLogger(__name__)
 
 API_ID = "29872536"
@@ -55,35 +55,44 @@ def load_proxies(file_path="proxy.txt"):
         return []
 
 async def connect_existing_sessions(proxies, required_count):
-    """Retrieve and connect to sessions already in the database using proxies."""
+    """Retrieve and connect to sessions in the database with proxy rotation."""
     existing_sessions = []
     session_docs = list(sessions_collection.find())
     for i, session_data in enumerate(session_docs[:required_count]):
         phone = session_data["phone"]
         session_string = session_data["session_string"]
-        proxy = None if not proxies else proxies[i % len(proxies)]
-        formatted_proxy = (proxy[0].upper(), proxy[1], int(proxy[2])) if proxy else None
 
-        try:
-            client = TelegramClient(StringSession(session_string), API_ID, API_HASH, proxy=formatted_proxy)
-            await client.connect()
-            if await client.is_user_authorized():
-                logger.info(f"Connected to existing session for phone: {phone} using proxy: {formatted_proxy}")
-                existing_sessions.append(client)
-            else:
-                logger.warning(f"Session for {phone} is not authorized.")
-                await client.disconnect()
-        except Exception as e:
-            logger.error(f"Failed to connect to session for phone: {phone}. Error: {str(e)}")
+        for retry in range(2):  # Retry twice per proxy
+            proxy = None if not proxies else proxies[(i + retry) % len(proxies)]
+            formatted_proxy = (proxy[0].upper(), proxy[1], int(proxy[2])) if proxy else None
+
+            try:
+                client = TelegramClient(StringSession(session_string), API_ID, API_HASH, proxy=formatted_proxy)
+                await client.connect()
+                if await client.is_user_authorized():
+                    logger.info(f"Connected to existing session for phone: {phone} using proxy: {formatted_proxy}")
+                    existing_sessions.append(client)
+                    break
+                else:
+                    logger.warning(f"Session for {phone} is not authorized. Removing it from the database.")
+                    sessions_collection.delete_one({"phone": phone})
+                    await client.disconnect()
+                    break
+            except (OSError, ConnectionError) as e:
+                logger.warning(f"Proxy issue for session {phone}: {formatted_proxy}. Retrying... ({retry + 1}/2)")
+            except Exception as e:
+                logger.error(f"Failed to connect to session for phone: {phone}. Error: {str(e)}")
+                break
     return existing_sessions
 
 async def login(phone, proxy=None):
+    """Login function with improved logging and error handling."""
     try:
         client = TelegramClient(f'session_{phone}', API_ID, API_HASH, proxy=proxy)
         await client.connect()
 
         if not await client.is_user_authorized():
-            print(f"\n[!] Account {phone} is not authorized. Logging in...")
+            logger.info(f"Account {phone} is not authorized. Logging in...")
             await client.send_code_request(phone)
             otp = input(f"Enter the OTP for {phone}: ")
             await client.sign_in(phone, otp)
@@ -100,14 +109,17 @@ async def login(phone, proxy=None):
                 {"$set": {"session_string": session_string}},
                 upsert=True,
             )
-            print(f"[✓] Session saved for account {phone}.")
+            logger.info(f"Session saved for account {phone}.")
         else:
-            print(f"[✓] Account {phone} is already authorized.")
+            logger.info(f"Account {phone} is already authorized.")
 
         return client
 
+    except (OSError, ConnectionError) as e:
+        logger.error(f"Proxy issue during login for account {phone}. Error: {str(e)}")
+        return None
     except Exception as e:
-        print(f"[!] Error during login for account {phone}: {str(e)}")
+        logger.error(f"Error during login for account {phone}: {str(e)}")
         return None
 
 async def assign_proxies_to_new_sessions(proxies, accounts_needed):
@@ -120,11 +132,12 @@ async def assign_proxies_to_new_sessions(proxies, accounts_needed):
 
         client = await login(phone, proxy=formatted_proxy)
         if client:
-            print(f"[✓] Logged in to new account {phone} using proxy: {formatted_proxy}")
+            logger.info(f"[✓] Logged in to new account {phone} using proxy: {formatted_proxy}")
             new_sessions.append(client)
     return new_sessions
 
 async def report_entity(client, entity, reason, times_to_report):
+    """Report an entity with improved error handling and logging."""
     try:
         if reason not in REPORT_REASONS:
             logger.error(f"Invalid report reason: {reason}")
@@ -143,12 +156,15 @@ async def report_entity(client, entity, reason, times_to_report):
         successful_reports = 0
 
         for _ in range(times_to_report):
-            result = await client(ReportPeerRequest(entity_peer, REPORT_REASONS[reason], message))
-            if result:
-                successful_reports += 1
-                print(f"[✓] Reported {entity} for {reason}.")
-            else:
-                print(f"[✗] Failed to report {entity}.")
+            try:
+                result = await client(ReportPeerRequest(entity_peer, REPORT_REASONS[reason], message))
+                if result:
+                    successful_reports += 1
+                    logger.info(f"[✓] Reported {entity} for {reason}.")
+                else:
+                    logger.warning(f"[✗] Failed to report {entity}.")
+            except Exception as e:
+                logger.error(f"Error during report attempt for {entity}: {str(e)}")
 
         return successful_reports
 
