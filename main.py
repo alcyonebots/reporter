@@ -2,6 +2,18 @@ import asyncio
 import logging
 from telethon import TelegramClient
 from telethon.sessions import StringSession
+from telethon.tl.functions.account import ReportPeerRequest
+from telethon.tl.types import (
+    InputReportReasonSpam,
+    InputReportReasonViolence,
+    InputReportReasonPornography,
+    InputReportReasonChildAbuse,
+    InputReportReasonCopyright,
+    InputReportReasonOther,
+    InputPeerChat,
+    InputPeerChannel,
+    InputPeerUser,
+)
 from pymongo import MongoClient
 
 # Logging setup
@@ -20,6 +32,15 @@ client = MongoClient(MONGO_URI)
 db = client[DB_NAME]
 sessions_collection = db[COLLECTION_NAME]
 
+# Reasons for reporting
+REPORT_REASONS = {
+    "spam": InputReportReasonSpam(),
+    "violence": InputReportReasonViolence(),
+    "pornography": InputReportReasonPornography(),
+    "child abuse": InputReportReasonChildAbuse(),
+    "copyright infringement": InputReportReasonCopyright(),
+    "other": InputReportReasonOther(),
+}
 
 def load_proxies(file_path="proxy.txt"):
     """Load proxies from a file."""
@@ -33,140 +54,152 @@ def load_proxies(file_path="proxy.txt"):
         logger.error(f"Proxy file '{file_path}' not found.")
         return []
 
+async def connect_existing_sessions(proxies, required_count):
+    """Retrieve and connect to sessions already in the database using proxies."""
+    existing_sessions = []
+    session_docs = list(sessions_collection.find())
+    for i, session_data in enumerate(session_docs[:required_count]):
+        phone = session_data["phone"]
+        session_string = session_data["session_string"]
+        proxy = None if not proxies else proxies[i % len(proxies)]
+        formatted_proxy = (proxy[0].upper(), proxy[1], int(proxy[2])) if proxy else None
 
-async def connect_with_retry(client, max_attempts=2):
-    """Try to connect to Telegram with retries."""
-    for attempt in range(1, max_attempts + 1):
         try:
+            client = TelegramClient(StringSession(session_string), API_ID, API_HASH, proxy=formatted_proxy)
             await client.connect()
             if await client.is_user_authorized():
-                return True
+                logger.info(f"Connected to existing session for phone: {phone} using proxy: {formatted_proxy}")
+                existing_sessions.append(client)
             else:
-                logger.warning("[!] Session is not authorized.")
-                return False
-        except OSError as e:  # Handle proxy connection errors
-            logger.warning(f"[!] Attempt {attempt} failed: {str(e)}")
-    return False
-
-
-async def login_with_proxy(phone, proxies, max_attempts_per_proxy=2):
-    """Attempt to log in using proxies, switching proxies if one fails."""
-    for proxy in proxies:
-        try:
-            formatted_proxy = (proxy[0].upper(), proxy[1], int(proxy[2]))
-            client = TelegramClient(f'session_{phone}', API_ID, API_HASH, proxy=formatted_proxy)
-
-            if await connect_with_retry(client, max_attempts_per_proxy):
-                logger.info(f"Successfully logged in for {phone} using proxy: {formatted_proxy}")
-                return client
-            else:
-                logger.warning(f"Failed to connect for {phone} using proxy: {formatted_proxy}")
-
+                logger.warning(f"Session for {phone} is not authorized.")
+                await client.disconnect()
         except Exception as e:
-            logger.error(f"Error with proxy {proxy}: {str(e)}")
+            logger.error(f"Failed to connect to session for phone: {phone}. Error: {str(e)}")
+    return existing_sessions
 
-    logger.error(f"All proxies failed for {phone}. Skipping account.")
-    return None
+async def login(phone, proxy=None):
+    try:
+        client = TelegramClient(f'session_{phone}', API_ID, API_HASH, proxy=proxy)
+        await client.connect()
 
+        if not await client.is_user_authorized():
+            print(f"\n[!] Account {phone} is not authorized. Logging in...")
+            await client.send_code_request(phone)
+            otp = input(f"Enter the OTP for {phone}: ")
+            await client.sign_in(phone, otp)
 
-async def login_existing_sessions(proxies):
-    """Log in with existing sessions from the database."""
-    clients = []
-    sessions = list(sessions_collection.find({}))
-    for session in sessions:
-        try:
-            phone = session["phone"]
-            session_string = session["session_string"]
-            formatted_proxy = random.choice(proxies)
-            proxy = (formatted_proxy[0].upper(), formatted_proxy[1], int(formatted_proxy[2]))
+            # Handle 2FA if enabled
+            if not await client.is_user_authorized():
+                password = input(f"Enter the 2FA password for {phone}: ")
+                await client.sign_in(password=password)
 
-            client = TelegramClient(StringSession(session_string), API_ID, API_HASH, proxy=proxy)
-
-            if await connect_with_retry(client):
-                logger.info(f"Connected to session for phone: {phone}")
-                clients.append(client)
-            else:
-                logger.warning(f"Session for phone {phone} is invalid. Removing from database.")
-                sessions_collection.delete_one({"phone": phone})
-
-        except Exception as e:
-            logger.error(f"Error with session for phone {session['phone']}: {str(e)}")
-
-    return clients
-
-
-async def login_new_accounts(new_accounts, proxies):
-    """Log in with new accounts provided by the user."""
-    clients = []
-    for phone in new_accounts:
-        client = await login_with_proxy(phone, proxies)
-        if client:
+            # Save the session string to MongoDB
             session_string = StringSession.save(client.session)
             sessions_collection.update_one(
                 {"phone": phone},
-                {"$set": {"phone": phone, "session_string": session_string}},
+                {"$set": {"session_string": session_string}},
                 upsert=True,
             )
-            logger.info(f"Session saved for account {phone}.")
-            clients.append(client)
-    return clients
+            print(f"[✓] Session saved for account {phone}.")
+        else:
+            print(f"[✓] Account {phone} is already authorized.")
 
+        return client
 
-async def report_entity(client, entity, reason, message, times_to_report):
-    """Report an entity."""
-    success_count = 0
+    except Exception as e:
+        print(f"[!] Error during login for account {phone}: {str(e)}")
+        return None
+
+async def assign_proxies_to_new_sessions(proxies, accounts_needed):
+    """Log in to new accounts using proxies."""
+    new_sessions = []
+    for i in range(accounts_needed):
+        phone = input(f"Enter the phone number for account {i + 1}: ")
+        proxy = None if not proxies else proxies[i % len(proxies)]
+        formatted_proxy = (proxy[0].upper(), proxy[1], int(proxy[2])) if proxy else None
+
+        client = await login(phone, proxy=formatted_proxy)
+        if client:
+            print(f"[✓] Logged in to new account {phone} using proxy: {formatted_proxy}")
+            new_sessions.append(client)
+    return new_sessions
+
+async def report_entity(client, entity, reason, times_to_report):
     try:
+        if reason not in REPORT_REASONS:
+            logger.error(f"Invalid report reason: {reason}")
+            return 0
+
         entity_peer = await client.get_input_entity(entity)
+        default_messages = {
+            "spam": "This is spam.",
+            "violence": "This content promotes violence.",
+            "pornography": "This content contains pornography.",
+            "child abuse": "This content is related to child abuse.",
+            "copyright infringement": "This content infringes on copyright.",
+            "other": "This is an inappropriate entity.",
+        }
+        message = default_messages.get(reason, "This is a reported entity.")
+        successful_reports = 0
+
         for _ in range(times_to_report):
-            await client(ReportPeerRequest(entity_peer, reason, message))
-            success_count += 1
-            logger.info(f"Successfully reported {entity}.")
+            result = await client(ReportPeerRequest(entity_peer, REPORT_REASONS[reason], message))
+            if result:
+                successful_reports += 1
+                print(f"[✓] Reported {entity} for {reason}.")
+            else:
+                print(f"[✗] Failed to report {entity}.")
+
+        return successful_reports
+
     except Exception as e:
         logger.error(f"Failed to report {entity}: {str(e)}")
-    return success_count
-
+        return 0
 
 async def main():
+    print("\n=== Telegram Multi-Account Reporting Tool ===")
+    print("\nThis tool helps you report entities using multiple Telegram accounts.\n")
+
+    account_count = int(input("Enter the number of accounts to use for reporting: "))
     proxies = load_proxies()
-    if not proxies:
-        logger.error("No proxies available. Exiting.")
-        return
 
-    account_count = int(input("Enter the number of accounts to use: "))
+    session_docs = list(sessions_collection.find())
+    existing_count = len(session_docs)
 
-    # Log in with existing sessions
-    existing_clients = await login_existing_sessions(proxies)
-    logger.info(f"Logged in with {len(existing_clients)} existing sessions.")
+    if existing_count >= account_count:
+        print(f"\n[✓] There are {account_count} existing sessions. No new accounts required.")
+        clients = await connect_existing_sessions(proxies, account_count)
+    else:
+        print(f"\n[✓] {existing_count} sessions found in the database.")
+        new_accounts_needed = account_count - existing_count
+        print(f"[!] Please log in to {new_accounts_needed} new accounts.")
+        existing_clients = await connect_existing_sessions(proxies, existing_count)
+        new_clients = await assign_proxies_to_new_sessions(proxies, new_accounts_needed)
+        clients = existing_clients + new_clients
 
-    # Determine how many new accounts to log in
-    if len(existing_clients) < account_count:
-        new_account_count = account_count - len(existing_clients)
-        logger.info(f"Need to log in to {new_account_count} new accounts.")
-        new_accounts = [
-            input(f"Enter phone number for new account {i + 1} (e.g., +123456789): ")
-            for i in range(new_account_count)
-        ]
-        new_clients = await login_new_accounts(new_accounts, proxies)
-        existing_clients.extend(new_clients)
-
-    # Proceed with reporting
+    print("\nSelect the type of entity to report:")
+    print("1 - Group")
+    print("2 - Channel")
+    print("3 - User")
+    choice = int(input("Enter your choice (1/2/3): "))
     entity = input("Enter the group/channel username or user ID to report: ").strip()
-    reason = InputReportReasonSpam()  # Example reason
-    message = "Spam content."
+    print("\nAvailable reasons for reporting:")
+    for idx, reason in enumerate(REPORT_REASONS.keys(), 1):
+        print(f"{idx} - {reason.capitalize()}")
+    reason_choice = int(input("Enter your choice: "))
+    reason = list(REPORT_REASONS.keys())[reason_choice - 1]
+
     times_to_report = int(input("Enter the number of times to report: "))
+    total_successful_reports = 0
 
-    total_reports = 0
-    for client in existing_clients:
-        reports = await report_entity(client, entity, reason, message, times_to_report)
-        total_reports += reports
+    for client in clients:
+        successful_reports = await report_entity(client, entity, reason, times_to_report)
+        total_successful_reports += successful_reports
 
-    logger.info(f"Total successful reports submitted: {total_reports}")
+    print(f"\n[✓] Total successful reports submitted: {total_successful_reports}")
 
-    # Disconnect clients
-    for client in existing_clients:
+    for client in clients:
         await client.disconnect()
-
 
 if __name__ == "__main__":
     asyncio.run(main())
-            
