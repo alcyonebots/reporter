@@ -39,6 +39,7 @@ REPORT_REASONS = {
     "pornography": InputReportReasonPornography(),
     "child abuse": InputReportReasonChildAbuse(),
     "copyright infringement": InputReportReasonCopyright(),
+    "scam": InputReportReasonOther(),
     "other": InputReportReasonOther(),
 }
 
@@ -150,6 +151,7 @@ async def report_entity(client, entity, reason, times_to_report):
             "pornography": "This content contains pornography.",
             "child abuse": "This content is related to child abuse.",
             "copyright infringement": "This content infringes on copyright.",
+            "scam": "This account is impersonating Pavel Durov and attempting to scam users. They are misleading people by pretending to be the founder of Telegram. Please review and take necessary action to label this account as a scam.",
             "other": "This is an inappropriate entity.",
         }
         message = default_messages.get(reason, "This is a reported entity.")
