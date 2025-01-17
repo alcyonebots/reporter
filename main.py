@@ -3,7 +3,7 @@ import logging
 from telethon import TelegramClient
 from telethon.sessions import StringSession
 from telethon.tl.functions.account import ReportPeerRequest
-from telethon.tl.types import MTProtoProxy
+from telethon.tl.types.mtproto import MTProtoProxy
 from telethon.tl.types import (
     InputPeerUser,
     InputReportReasonSpam,
