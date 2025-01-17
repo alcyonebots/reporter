@@ -4,6 +4,7 @@ from telethon import TelegramClient
 from telethon.sessions import StringSession
 from telethon.tl.functions.account import ReportPeerRequest
 from telethon.tl.types import (
+    MTProtoProxy,
     InputPeerUser,
     InputReportReasonSpam,
     InputReportReasonViolence,
@@ -58,6 +59,8 @@ def load_proxies(file_path="proxy.txt"):
         logger.error(f"Proxy file '{file_path}' not found.")
         return []
 
+from telethon.tl.types import MTProtoProxy
+
 async def connect_existing_sessions(proxies, required_count):
     """Retrieve and connect to sessions in the database with MTProto proxy rotation."""
     existing_sessions = []
@@ -69,8 +72,19 @@ async def connect_existing_sessions(proxies, required_count):
         for retry in range(2):  # Retry twice per proxy
             proxy = None if not proxies else proxies[(i + retry) % len(proxies)]
 
+            if proxy and proxy["proxy_type"] == "MTProto":
+                # Construct MTProto proxy configuration
+                mtproto_proxy = MTProtoProxy(
+                    server=proxy["addr"], 
+                    port=proxy["port"], 
+                    secret=proxy["secret"]
+                )
+                proxy_config = mtproto_proxy
+            else:
+                proxy_config = None
+
             try:
-                client = TelegramClient(StringSession(session_string), API_ID, API_HASH, proxy=proxy)
+                client = TelegramClient(StringSession(session_string), API_ID, API_HASH, proxy=proxy_config)
                 await client.connect()
                 if await client.is_user_authorized():
                     logger.info(f"Connected to existing session for phone: {phone} using proxy: {proxy}")
@@ -91,7 +105,18 @@ async def connect_existing_sessions(proxies, required_count):
 async def login(phone, proxy=None):
     """Login function with MTProto proxy support."""
     try:
-        client = TelegramClient(f'session_{phone}', API_ID, API_HASH, proxy=proxy)
+        if proxy and proxy["proxy_type"] == "MTProto":
+            # Construct MTProto proxy configuration
+            mtproto_proxy = MTProtoProxy(
+                server=proxy["addr"], 
+                port=proxy["port"], 
+                secret=proxy["secret"]
+            )
+            proxy_config = mtproto_proxy
+        else:
+            proxy_config = None
+
+        client = TelegramClient(f'session_{phone}', API_ID, API_HASH, proxy=proxy_config)
         await client.connect()
 
         if not await client.is_user_authorized():
