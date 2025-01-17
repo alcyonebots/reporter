@@ -44,19 +44,21 @@ REPORT_REASONS = {
 }
 
 def load_proxies(file_path="proxy.txt"):
-    """Load proxies from a file."""
+    """Load MTProto proxies from a file."""
     try:
         with open(file_path, "r") as f:
-            proxies = [
-                tuple(line.strip().split(",")) for line in f.readlines() if line.strip()
-            ]
-        return proxies
+            proxies = []
+            for line in f:
+                parts = line.strip().split(",")
+                if len(parts) == 4:  # MTProto proxy (type, host, port, secret)
+                    proxies.append({"proxy_type": "MTProto", "addr": parts[1], "port": int(parts[2]), "secret": parts[3]})
+            return proxies
     except FileNotFoundError:
         logger.error(f"Proxy file '{file_path}' not found.")
         return []
 
 async def connect_existing_sessions(proxies, required_count):
-    """Retrieve and connect to sessions in the database with proxy rotation."""
+    """Retrieve and connect to sessions in the database with MTProto proxy rotation."""
     existing_sessions = []
     session_docs = list(sessions_collection.find())
     for i, session_data in enumerate(session_docs[:required_count]):
@@ -65,13 +67,12 @@ async def connect_existing_sessions(proxies, required_count):
 
         for retry in range(2):  # Retry twice per proxy
             proxy = None if not proxies else proxies[(i + retry) % len(proxies)]
-            formatted_proxy = (proxy[0].upper(), proxy[1], int(proxy[2])) if proxy else None
 
             try:
-                client = TelegramClient(StringSession(session_string), API_ID, API_HASH, proxy=formatted_proxy)
+                client = TelegramClient(StringSession(session_string), API_ID, API_HASH, proxy=proxy)
                 await client.connect()
                 if await client.is_user_authorized():
-                    logger.info(f"Connected to existing session for phone: {phone} using proxy: {formatted_proxy}")
+                    logger.info(f"Connected to existing session for phone: {phone} using proxy: {proxy}")
                     existing_sessions.append(client)
                     break
                 else:
@@ -80,14 +81,14 @@ async def connect_existing_sessions(proxies, required_count):
                     await client.disconnect()
                     break
             except (OSError, ConnectionError) as e:
-                logger.warning(f"Proxy issue for session {phone}: {formatted_proxy}. Retrying... ({retry + 1}/2)")
+                logger.warning(f"Proxy issue for session {phone}: {proxy}. Retrying... ({retry + 1}/2)")
             except Exception as e:
                 logger.error(f"Failed to connect to session for phone: {phone}. Error: {str(e)}")
                 break
     return existing_sessions
 
 async def login(phone, proxy=None):
-    """Login function with improved logging and error handling."""
+    """Login function with MTProto proxy support."""
     try:
         client = TelegramClient(f'session_{phone}', API_ID, API_HASH, proxy=proxy)
         await client.connect()
@@ -124,16 +125,15 @@ async def login(phone, proxy=None):
         return None
 
 async def assign_proxies_to_new_sessions(proxies, accounts_needed):
-    """Log in to new accounts using proxies."""
+    """Log in to new accounts using MTProto proxies."""
     new_sessions = []
     for i in range(accounts_needed):
         phone = input(f"Enter the phone number for account {i + 1}: ")
         proxy = None if not proxies else proxies[i % len(proxies)]
-        formatted_proxy = (proxy[0].upper(), proxy[1], int(proxy[2])) if proxy else None
 
-        client = await login(phone, proxy=formatted_proxy)
+        client = await login(phone, proxy=proxy)
         if client:
-            logger.info(f"[✓] Logged in to new account {phone} using proxy: {formatted_proxy}")
+            logger.info(f"[✓] Logged in to new account {phone} using proxy: {proxy}")
             new_sessions.append(client)
     return new_sessions
 
@@ -151,7 +151,7 @@ async def report_entity(client, entity, reason, times_to_report):
             "pornography": "This content contains pornography.",
             "child abuse": "This content is related to child abuse.",
             "copyright infringement": "This content infringes on copyright.",
-            "scam": "This account is impersonating Pavel Durov and attempting to scam users. They are misleading people by pretending to be the founder of Telegram. Please review and take necessary action to label this account as a scam.",
+            "scam": "This account is impersonating Pavel Durov and attempting to scam users.",
             "other": "This is an inappropriate entity.",
         }
         message = default_messages.get(reason, "This is a reported entity.")
