@@ -5,7 +5,6 @@ from telethon.sessions import StringSession
 from telethon.tl.functions.account import ReportPeerRequest
 from telethon.tl.types import MTProtoProxy
 from telethon.tl.types import (
-    MTProtoProxy,
     InputPeerUser,
     InputReportReasonSpam,
     InputReportReasonViolence,
