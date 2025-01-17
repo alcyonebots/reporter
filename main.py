@@ -4,6 +4,7 @@ from telethon import TelegramClient
 from telethon.sessions import StringSession
 from telethon.tl.functions.account import ReportPeerRequest
 from telethon.tl.types import (
+    InputPeerUser,
     InputReportReasonSpam,
     InputReportReasonViolence,
     InputReportReasonPornography,
@@ -144,7 +145,12 @@ async def report_entity(client, entity, reason, times_to_report):
             logger.error(f"Invalid report reason: {reason}")
             return 0
 
-        entity_peer = await client.get_input_entity(entity)
+        # Determine if the input is a user ID or a username
+        if entity.isdigit():
+            entity_peer = InputPeerUser(user_id=int(entity), access_hash=0)  # Replace `0` with actual access hash if known
+        else:
+            entity_peer = await client.get_input_entity(entity)
+
         default_messages = {
             "spam": "This is spam.",
             "violence": "This content promotes violence.",
@@ -221,3 +227,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+        
