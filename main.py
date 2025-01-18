@@ -52,11 +52,7 @@ def load_proxies(file_path="proxy.txt"):
             for line in f:
                 parts = line.strip().split(",")
                 if len(parts) == 4 and parts[0].lower() == "mtproto":
-                    proxies.append({
-                        "addr": parts[1],
-                        "port": int(parts[2]),
-                        "secret": parts[3]
-                    })
+                    proxies.append((parts[1], int(parts[2]), parts[3]))  # Returns a tuple
             return proxies
     except FileNotFoundError:
         logger.error(f"Proxy file '{file_path}' not found.")
@@ -73,14 +69,11 @@ async def connect_existing_sessions(proxies, required_count):
         for retry in range(2):  # Retry twice per proxy
             proxy = None if not proxies else proxies[(i + retry) % len(proxies)]
 
-            # Use tuple format for MTProto proxy
-            proxy_config = (proxy["addr"], proxy["port"], proxy["secret"]) if proxy else None
-
             try:
-                client = TelegramClient(StringSession(session_string), API_ID, API_HASH, proxy=proxy_config)
+                client = TelegramClient(StringSession(session_string), API_ID, API_HASH, proxy=proxy)
                 await client.connect()
                 if await client.is_user_authorized():
-                    logger.info(f"Connected to existing session for phone: {phone} using proxy: {proxy_config}")
+                    logger.info(f"Connected to existing session for phone: {phone} using proxy: {proxy}")
                     existing_sessions.append(client)
                     break
                 else:
@@ -95,10 +88,7 @@ async def connect_existing_sessions(proxies, required_count):
 async def login(phone, proxy=None):
     """Login function with MTProto proxy support."""
     try:
-        # Use tuple format for MTProto proxy
-        proxy_config = (proxy["addr"], proxy["port"], proxy["secret"]) if proxy else None
-
-        client = TelegramClient(f'session_{phone}', API_ID, API_HASH, proxy=proxy_config)
+        client = TelegramClient(f'session_{phone}', API_ID, API_HASH, proxy=proxy)
         await client.connect()
 
         if not await client.is_user_authorized():
