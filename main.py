@@ -4,7 +4,6 @@ from telethon import TelegramClient
 from telethon.sessions import StringSession
 from telethon.tl.functions.account import ReportPeerRequest
 from telethon.tl.types import (
-    InputPeerUser,
     InputReportReasonSpam,
     InputReportReasonViolence,
     InputReportReasonPornography,
@@ -51,8 +50,8 @@ def load_proxies(file_path="proxy.txt"):
             proxies = []
             for line in f:
                 parts = line.strip().split(",")
-                if len(parts) == 4 and parts[0].lower() == "mtproto":
-                    proxies.append((parts[1], int(parts[2]), parts[3]))  # Returns a tuple
+                if len(parts) == 3:  # Expecting format: host,port,secret
+                    proxies.append((parts[0], int(parts[1]), parts[2]))
             return proxies
     except FileNotFoundError:
         logger.error(f"Proxy file '{file_path}' not found.")
@@ -133,28 +132,14 @@ async def assign_proxies_to_new_sessions(proxies, accounts_needed):
     return new_sessions
 
 async def report_entity(client, entity, reason, times_to_report):
-    """Report an entity with improved error handling and logging."""
+    """Report an entity."""
     try:
         if reason not in REPORT_REASONS:
             logger.error(f"Invalid report reason: {reason}")
             return 0
 
-        # Determine if the input is a user ID or a username
-        if entity.isdigit():
-            entity_peer = InputPeerUser(user_id=int(entity), access_hash=0)  # Replace `0` with actual access hash if known
-        else:
-            entity_peer = await client.get_input_entity(entity)
-
-        default_messages = {
-            "spam": "This is spam.",
-            "violence": "This content promotes violence.",
-            "pornography": "This content contains pornography.",
-            "child abuse": "This content is related to child abuse.",
-            "copyright infringement": "This content infringes on copyright.",
-            "scam": "This account is impersonating Pavel Durov and attempting to scam users.",
-            "other": "This is an inappropriate entity.",
-        }
-        message = default_messages.get(reason, "This is a reported entity.")
+        entity_peer = await client.get_input_entity(entity)
+        message = "Reported entity for moderation."
         successful_reports = 0
 
         for _ in range(times_to_report):
@@ -163,8 +148,6 @@ async def report_entity(client, entity, reason, times_to_report):
                 if result:
                     successful_reports += 1
                     logger.info(f"[✓] Reported {entity} for {reason}.")
-                else:
-                    logger.warning(f"[✗] Failed to report {entity}.")
             except Exception as e:
                 logger.error(f"Error during report attempt for {entity}: {str(e)}")
 
@@ -176,7 +159,6 @@ async def report_entity(client, entity, reason, times_to_report):
 
 async def main():
     print("\n=== Telegram Multi-Account Reporting Tool ===")
-    print("\nThis tool helps you report entities using multiple Telegram accounts.\n")
 
     account_count = int(input("Enter the number of accounts to use for reporting: "))
     proxies = load_proxies()
@@ -195,18 +177,8 @@ async def main():
         new_clients = await assign_proxies_to_new_sessions(proxies, new_accounts_needed)
         clients = existing_clients + new_clients
 
-    print("\nSelect the type of entity to report:")
-    print("1 - Group")
-    print("2 - Channel")
-    print("3 - User")
-    choice = int(input("Enter your choice (1/2/3): "))
     entity = input("Enter the group/channel username or user ID to report: ").strip()
-    print("\nAvailable reasons for reporting:")
-    for idx, reason in enumerate(REPORT_REASONS.keys(), 1):
-        print(f"{idx} - {reason.capitalize()}")
-    reason_choice = int(input("Enter your choice: "))
-    reason = list(REPORT_REASONS.keys())[reason_choice - 1]
-
+    reason = input("Enter the reason for reporting (e.g., spam, violence): ").strip().lower()
     times_to_report = int(input("Enter the number of times to report: "))
     total_successful_reports = 0
 
@@ -221,4 +193,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-        
