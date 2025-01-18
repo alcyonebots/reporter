@@ -4,7 +4,6 @@ from telethon import TelegramClient
 from telethon.sessions import StringSession
 from telethon.tl.functions.account import ReportPeerRequest
 from telethon.tl.types import (
-    MTProtoProxy,
     InputPeerUser,
     InputReportReasonSpam,
     InputReportReasonViolence,
@@ -52,8 +51,13 @@ def load_proxies(file_path="proxy.txt"):
             proxies = []
             for line in f:
                 parts = line.strip().split(",")
-                if len(parts) == 4:  # MTProto proxy (type, host, port, secret)
-                    proxies.append({"proxy_type": "MTProto", "addr": parts[1], "port": int(parts[2]), "secret": parts[3]})
+                if len(parts) == 4 and parts[0].lower() == "mtproto":
+                    proxies.append({
+                        "proxy_type": "mtproto",
+                        "addr": parts[1],
+                        "port": int(parts[2]),
+                        "secret": parts[3]
+                    })
             return proxies
     except FileNotFoundError:
         logger.error(f"Proxy file '{file_path}' not found.")
@@ -70,22 +74,18 @@ async def connect_existing_sessions(proxies, required_count):
         for retry in range(2):  # Retry twice per proxy
             proxy = None if not proxies else proxies[(i + retry) % len(proxies)]
 
-            if proxy and proxy["proxy_type"] == "MTProto":
-                # Construct MTProto proxy configuration
-                mtproto_proxy = MTProtoProxy(
-                    server=proxy["addr"], 
-                    port=proxy["port"], 
-                    secret=proxy["secret"]
-                )
-                proxy_config = mtproto_proxy
-            else:
-                proxy_config = None
+            proxy_config = {
+                "proxy_type": "mtproto",
+                "addr": proxy["addr"],
+                "port": proxy["port"],
+                "secret": proxy["secret"]
+            } if proxy else None
 
             try:
                 client = TelegramClient(StringSession(session_string), API_ID, API_HASH, proxy=proxy_config)
                 await client.connect()
                 if await client.is_user_authorized():
-                    logger.info(f"Connected to existing session for phone: {phone} using proxy: {proxy}")
+                    logger.info(f"Connected to existing session for phone: {phone} using proxy: {proxy_config}")
                     existing_sessions.append(client)
                     break
                 else:
@@ -93,26 +93,19 @@ async def connect_existing_sessions(proxies, required_count):
                     sessions_collection.delete_one({"phone": phone})
                     await client.disconnect()
                     break
-            except (OSError, ConnectionError) as e:
-                logger.warning(f"Proxy issue for session {phone}: {proxy}. Retrying... ({retry + 1}/2)")
             except Exception as e:
                 logger.error(f"Failed to connect to session for phone: {phone}. Error: {str(e)}")
-                break
     return existing_sessions
 
 async def login(phone, proxy=None):
     """Login function with MTProto proxy support."""
     try:
-        if proxy and proxy["proxy_type"] == "MTProto":
-            # Construct MTProto proxy configuration
-            mtproto_proxy = MTProtoProxy(
-                server=proxy["addr"], 
-                port=proxy["port"], 
-                secret=proxy["secret"]
-            )
-            proxy_config = mtproto_proxy
-        else:
-            proxy_config = None
+        proxy_config = {
+            "proxy_type": "mtproto",
+            "addr": proxy["addr"],
+            "port": proxy["port"],
+            "secret": proxy["secret"]
+        } if proxy else None
 
         client = TelegramClient(f'session_{phone}', API_ID, API_HASH, proxy=proxy_config)
         await client.connect()
@@ -141,14 +134,10 @@ async def login(phone, proxy=None):
 
         return client
 
-    except (OSError, ConnectionError) as e:
-        logger.error(f"Proxy issue during login for account {phone}. Error: {str(e)}")
-        return None
     except Exception as e:
         logger.error(f"Error during login for account {phone}: {str(e)}")
         return None
-            
-            
+
 async def assign_proxies_to_new_sessions(proxies, accounts_needed):
     """Log in to new accounts using MTProto proxies."""
     new_sessions = []
