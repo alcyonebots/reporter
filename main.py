@@ -53,7 +53,6 @@ def load_proxies(file_path="proxy.txt"):
                 parts = line.strip().split(",")
                 if len(parts) == 4 and parts[0].lower() == "mtproto":
                     proxies.append({
-                        "proxy_type": "mtproto",
                         "addr": parts[1],
                         "port": int(parts[2]),
                         "secret": parts[3]
@@ -74,12 +73,8 @@ async def connect_existing_sessions(proxies, required_count):
         for retry in range(2):  # Retry twice per proxy
             proxy = None if not proxies else proxies[(i + retry) % len(proxies)]
 
-            proxy_config = {
-                "proxy_type": "mtproto",
-                "addr": proxy["addr"],
-                "port": proxy["port"],
-                "secret": proxy["secret"]
-            } if proxy else None
+            # Use tuple format for MTProto proxy
+            proxy_config = (proxy["addr"], proxy["port"], proxy["secret"]) if proxy else None
 
             try:
                 client = TelegramClient(StringSession(session_string), API_ID, API_HASH, proxy=proxy_config)
@@ -100,12 +95,8 @@ async def connect_existing_sessions(proxies, required_count):
 async def login(phone, proxy=None):
     """Login function with MTProto proxy support."""
     try:
-        proxy_config = {
-            "proxy_type": "mtproto",
-            "addr": proxy["addr"],
-            "port": proxy["port"],
-            "secret": proxy["secret"]
-        } if proxy else None
+        # Use tuple format for MTProto proxy
+        proxy_config = (proxy["addr"], proxy["port"], proxy["secret"]) if proxy else None
 
         client = TelegramClient(f'session_{phone}', API_ID, API_HASH, proxy=proxy_config)
         await client.connect()
