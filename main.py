@@ -3,8 +3,8 @@ import logging
 from telethon import TelegramClient
 from telethon.sessions import StringSession
 from telethon.tl.functions.account import ReportPeerRequest
-from telethon.tl.types.mtproto import MTProtoProxy
 from telethon.tl.types import (
+    MTProtoProxy,
     InputPeerUser,
     InputReportReasonSpam,
     InputReportReasonViolence,
@@ -147,55 +147,8 @@ async def login(phone, proxy=None):
     except Exception as e:
         logger.error(f"Error during login for account {phone}: {str(e)}")
         return None
-
-async def login(phone, proxy=None):
-    """Login function with MTProto proxy support."""
-    try:
-        if proxy and proxy["proxy_type"] == "MTProto":
-            # Construct MTProto proxy configuration
-            mtproto_proxy = MTProtoProxy(
-                server=proxy["addr"], 
-                port=proxy["port"], 
-                secret=proxy["secret"]
-            )
-            proxy_config = mtproto_proxy
-        else:
-            proxy_config = None
-
-        client = TelegramClient(f'session_{phone}', API_ID, API_HASH, proxy=proxy_config)
-        await client.connect()
-
-        if not await client.is_user_authorized():
-            logger.info(f"Account {phone} is not authorized. Logging in...")
-            await client.send_code_request(phone)
-            otp = input(f"Enter the OTP for {phone}: ")
-            await client.sign_in(phone, otp)
-
-            # Handle 2FA if enabled
-            if not await client.is_user_authorized():
-                password = input(f"Enter the 2FA password for {phone}: ")
-                await client.sign_in(password=password)
-
-            # Save the session string to MongoDB
-            session_string = StringSession.save(client.session)
-            sessions_collection.update_one(
-                {"phone": phone},
-                {"$set": {"session_string": session_string}},
-                upsert=True,
-            )
-            logger.info(f"Session saved for account {phone}.")
-        else:
-            logger.info(f"Account {phone} is already authorized.")
-
-        return client
-
-    except (OSError, ConnectionError) as e:
-        logger.error(f"Proxy issue during login for account {phone}. Error: {str(e)}")
-        return None
-    except Exception as e:
-        logger.error(f"Error during login for account {phone}: {str(e)}")
-        return None
-
+            
+            
 async def assign_proxies_to_new_sessions(proxies, accounts_needed):
     """Log in to new accounts using MTProto proxies."""
     new_sessions = []
