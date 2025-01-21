@@ -9,7 +9,7 @@ from telethon.tl.types import (
     InputReportReasonPornography,
     InputReportReasonChildAbuse,
     InputReportReasonCopyright,
-    InputReportReasonFake,  # Correct scam report reason for v1.38.1
+    InputReportReasonFake,
     InputReportReasonOther,
 )
 from pymongo import MongoClient
