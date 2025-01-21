@@ -64,7 +64,7 @@ async def connect_existing_sessions(proxies, required_count):
         phone = session_data["phone"]
         session_string = session_data["session_string"]
 
-        for retry in range(2):  # Retry twice per proxy
+        for retry in range(5):  # Retry twice per proxy
             proxy = None if not proxies else proxies[(i + retry) % len(proxies)]
             formatted_proxy = (proxy[0].upper(), proxy[1], int(proxy[2])) if proxy else None
 
