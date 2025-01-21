@@ -81,7 +81,7 @@ async def connect_existing_sessions(proxies, required_count):
                     await client.disconnect()
                     break
             except (OSError, ConnectionError) as e:
-                logger.warning(f"Proxy issue for session {phone}: {formatted_proxy}. Retrying... ({retry + 1}/2)")
+                logger.warning(f"Proxy issue for session {phone}: {formatted_proxy}. Retrying... ({retry + 1}/5)")
             except Exception as e:
                 logger.error(f"Failed to connect to session for phone: {phone}. Error: {str(e)}")
                 break
