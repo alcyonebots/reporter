@@ -25,7 +25,7 @@ API_ID = "29872536"
 API_HASH = "65e1f714a47c0879734553dc460e98d6"
 
 # MongoDB connection
-MONGO_URI = "mongodb+srv://denji3494:denji3494@cluster0.bskf1po.mongodb.net/"
+MONGO_URI = "mongodb+srv://Cenzo:Cenzo123@cenzo.azbk1.mongodb.net/"
 DB_NAME = "reporter"
 COLLECTION_NAME = "sessions"
 
@@ -44,20 +44,21 @@ REPORT_REASONS = {
     "other": InputReportReasonOther(),
 }
 
-def load_proxies(file_path="proxy.txt"):
-    """Load proxies from a file."""
+def load_mtproto_proxies(file_path="proxy.txt"):
+    """Load MTProto proxies from a file."""
     try:
         with open(file_path, "r") as f:
             proxies = [
-                tuple(line.strip().split(",")) for line in f.readlines() if line.strip()
+                line.strip().split(",") for line in f.readlines() if line.strip()
             ]
+            # Format: [secret, host, port]
         return proxies
     except FileNotFoundError:
         logger.error(f"Proxy file '{file_path}' not found.")
         return []
 
 async def connect_existing_sessions(proxies, required_count):
-    """Retrieve and connect to sessions in the database with proxy rotation."""
+    """Retrieve and connect to sessions in the database with MTProto proxy support."""
     existing_sessions = []
     session_docs = list(sessions_collection.find())
     for i, session_data in enumerate(session_docs[:required_count]):
@@ -66,29 +67,39 @@ async def connect_existing_sessions(proxies, required_count):
 
         for retry in range(5):  # Retry twice per proxy
             proxy = None if not proxies else proxies[(i + retry) % len(proxies)]
-            formatted_proxy = (proxy[0].upper(), proxy[1], int(proxy[2])) if proxy else None
+            formatted_proxy = None if not proxy else {
+                "proxy_type": "mtproto",
+                "addr": proxy[1],
+                "port": int(proxy[2]),
+                "secret": proxy[0],
+            }
 
             try:
-                client = TelegramClient(StringSession(session_string), API_ID, API_HASH, proxy=formatted_proxy)
+                client = TelegramClient(
+                    StringSession(session_string), API_ID, API_HASH, proxy=formatted_proxy
+                )
                 await client.connect()
                 if await client.is_user_authorized():
-                    logger.info(f"Connected to existing session for phone: {phone} using proxy: {formatted_proxy}")
+                    logger.info(
+                        f"Connected to existing session for phone: {phone} using proxy: {formatted_proxy}"
+                    )
                     existing_sessions.append(client)
                     break
                 else:
-                    logger.warning(f"Session for {phone} is not authorized. Removing it from the database.")
+                    logger.warning(
+                        f"Session for {phone} is not authorized. Removing it from the database."
+                    )
                     sessions_collection.delete_one({"phone": phone})
                     await client.disconnect()
                     break
-            except (OSError, ConnectionError) as e:
-                logger.warning(f"Proxy issue for session {phone}: {formatted_proxy}. Retrying... ({retry + 1}/5)")
             except Exception as e:
-                logger.error(f"Failed to connect to session for phone: {phone}. Error: {str(e)}")
-                break
+                logger.warning(
+                    f"Proxy issue for session {phone}: {formatted_proxy}. Retrying... ({retry + 1}/5)"
+                )
     return existing_sessions
 
 async def login(phone, proxy=None):
-    """Login function with improved logging and error handling."""
+    """Login function with improved logging and MTProto proxy support."""
     try:
         client = TelegramClient(f'session_{phone}', API_ID, API_HASH, proxy=proxy)
         await client.connect()
@@ -117,20 +128,22 @@ async def login(phone, proxy=None):
 
         return client
 
-    except (OSError, ConnectionError) as e:
-        logger.error(f"Proxy issue during login for account {phone}. Error: {str(e)}")
-        return None
     except Exception as e:
         logger.error(f"Error during login for account {phone}: {str(e)}")
         return None
 
 async def assign_proxies_to_new_sessions(proxies, accounts_needed):
-    """Log in to new accounts using proxies."""
+    """Log in to new accounts using MTProto proxies."""
     new_sessions = []
     for i in range(accounts_needed):
         phone = input(f"Enter the phone number for account {i + 1}: ")
         proxy = None if not proxies else proxies[i % len(proxies)]
-        formatted_proxy = (proxy[0].upper(), proxy[1], int(proxy[2])) if proxy else None
+        formatted_proxy = None if not proxy else {
+            "proxy_type": "mtproto",
+            "addr": proxy[1],
+            "port": int(proxy[2]),
+            "secret": proxy[0],
+        }
 
         client = await login(phone, proxy=formatted_proxy)
         if client:
@@ -180,7 +193,7 @@ async def main():
     print("\nThis tool helps you report entities using multiple Telegram accounts.\n")
 
     account_count = int(input("Enter the number of accounts to use for reporting: "))
-    proxies = load_proxies()
+    proxies = load_mtproto_proxies()
 
     session_docs = list(sessions_collection.find())
     existing_count = len(session_docs)
