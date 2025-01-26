@@ -58,6 +58,7 @@ def load_proxies(file_path="proxy.txt"):
         return []
 
 
+
 async def connect_existing_sessions(proxies, required_count):
     """Retrieve and connect to sessions in the database with MTProto proxy support."""
     existing_sessions = []
