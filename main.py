@@ -12,6 +12,7 @@ from telethon.tl.types import (
     InputReportReasonFake,
     InputReportReasonOther,
 )
+from telethon.network.connection import ConnectionTcpMTProxy
 from pymongo import MongoClient
 
 # Logging setup
@@ -40,22 +41,23 @@ REPORT_REASONS = {
     "pornography": InputReportReasonPornography(),
     "child abuse": InputReportReasonChildAbuse(),
     "copyright infringement": InputReportReasonCopyright(),
-    "scam": InputReportReasonFake(),  # Use InputReportReasonFake for scams
+    "scam": InputReportReasonFake(),
     "other": InputReportReasonOther(),
 }
 
-def load_mtproto_proxies(file_path="proxy.txt"):
+
+def load_proxies(file_path="proxy.txt"):
     """Load MTProto proxies from a file."""
     try:
         with open(file_path, "r") as f:
             proxies = [
-                line.strip().split(",") for line in f.readlines() if line.strip()
+                tuple(line.strip().split(",")) for line in f.readlines() if line.strip()
             ]
-            # Format: [secret, host, port]
         return proxies
     except FileNotFoundError:
         logger.error(f"Proxy file '{file_path}' not found.")
         return []
+
 
 async def connect_existing_sessions(proxies, required_count):
     """Retrieve and connect to sessions in the database with MTProto proxy support."""
@@ -65,18 +67,21 @@ async def connect_existing_sessions(proxies, required_count):
         phone = session_data["phone"]
         session_string = session_data["session_string"]
 
-        for retry in range(5):  # Retry twice per proxy
+        for retry in range(5):  # Retry multiple times per proxy
             proxy = None if not proxies else proxies[(i + retry) % len(proxies)]
             formatted_proxy = None if not proxy else {
-                "proxy_type": "mtproto",
                 "addr": proxy[1],
                 "port": int(proxy[2]),
-                "secret": proxy[0],
+                "secret": bytes.fromhex(proxy[0]),
             }
 
             try:
                 client = TelegramClient(
-                    StringSession(session_string), API_ID, API_HASH, proxy=formatted_proxy
+                    StringSession(session_string),
+                    API_ID,
+                    API_HASH,
+                    connection=ConnectionTcpMTProxy,
+                    proxy=(formatted_proxy["addr"], formatted_proxy["port"], formatted_proxy["secret"]),
                 )
                 await client.connect()
                 if await client.is_user_authorized():
@@ -98,10 +103,23 @@ async def connect_existing_sessions(proxies, required_count):
                 )
     return existing_sessions
 
+
 async def login(phone, proxy=None):
-    """Login function with improved logging and MTProto proxy support."""
+    """Login function with MTProto proxy support for Telethon 1.38.1."""
     try:
-        client = TelegramClient(f'session_{phone}', API_ID, API_HASH, proxy=proxy)
+        formatted_proxy = None if not proxy else {
+            "addr": proxy[1],
+            "port": int(proxy[2]),
+            "secret": bytes.fromhex(proxy[0]),
+        }
+
+        client = TelegramClient(
+            f'session_{phone}',
+            API_ID,
+            API_HASH,
+            connection=ConnectionTcpMTProxy,
+            proxy=(formatted_proxy["addr"], formatted_proxy["port"], formatted_proxy["secret"]),
+        )
         await client.connect()
 
         if not await client.is_user_authorized():
@@ -132,6 +150,7 @@ async def login(phone, proxy=None):
         logger.error(f"Error during login for account {phone}: {str(e)}")
         return None
 
+
 async def assign_proxies_to_new_sessions(proxies, accounts_needed):
     """Log in to new accounts using MTProto proxies."""
     new_sessions = []
@@ -139,17 +158,17 @@ async def assign_proxies_to_new_sessions(proxies, accounts_needed):
         phone = input(f"Enter the phone number for account {i + 1}: ")
         proxy = None if not proxies else proxies[i % len(proxies)]
         formatted_proxy = None if not proxy else {
-            "proxy_type": "mtproto",
             "addr": proxy[1],
             "port": int(proxy[2]),
-            "secret": proxy[0],
+            "secret": bytes.fromhex(proxy[0]),
         }
 
-        client = await login(phone, proxy=formatted_proxy)
+        client = await login(phone, proxy=proxy)
         if client:
             logger.info(f"[✓] Logged in to new account {phone} using proxy: {formatted_proxy}")
             new_sessions.append(client)
     return new_sessions
+
 
 async def report_entity(client, entity, reason, times_to_report):
     """Report an entity with improved error handling and logging."""
@@ -159,16 +178,7 @@ async def report_entity(client, entity, reason, times_to_report):
             return 0
 
         entity_peer = await client.get_input_entity(entity)
-        default_messages = {
-            "spam": "This is spam.",
-            "violence": "This content promotes violence.",
-            "pornography": "This content contains pornography.",
-            "child abuse": "This content is related to child abuse.",
-            "copyright infringement": "This content infringes on copyright.",
-            "scam": "This account is impersonating someone and attempting to scam users.",
-            "other": "This is an inappropriate entity.",
-        }
-        message = default_messages.get(reason, "This is a reported entity.")
+        message = f"Reported for {reason}."
         successful_reports = 0
 
         for _ in range(times_to_report):
@@ -188,12 +198,13 @@ async def report_entity(client, entity, reason, times_to_report):
         logger.error(f"Failed to report {entity}: {str(e)}")
         return 0
 
+
 async def main():
     print("\n=== Telegram Multi-Account Reporting Tool ===")
     print("\nThis tool helps you report entities using multiple Telegram accounts.\n")
 
     account_count = int(input("Enter the number of accounts to use for reporting: "))
-    proxies = load_mtproto_proxies()
+    proxies = load_proxies()
 
     session_docs = list(sessions_collection.find())
     existing_count = len(session_docs)
@@ -232,6 +243,7 @@ async def main():
 
     for client in clients:
         await client.disconnect()
+
 
 if __name__ == "__main__":
     asyncio.run(main())
