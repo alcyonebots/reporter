@@ -12,7 +12,6 @@ from telethon.tl.types import (
     InputReportReasonFake,
     InputReportReasonOther,
 )
-from telethon.network.connection import ConnectionTcpMTProxy
 from pymongo import MongoClient
 
 # Logging setup
@@ -69,19 +68,14 @@ async def connect_existing_sessions(proxies, required_count):
 
         for retry in range(5):  # Retry multiple times per proxy
             proxy = None if not proxies else proxies[(i + retry) % len(proxies)]
-            formatted_proxy = None if not proxy else {
-                "addr": proxy[1],
-                "port": int(proxy[2]),
-                "secret": bytes.fromhex(proxy[0]),
-            }
+            formatted_proxy = None if not proxy else (proxy[1], int(proxy[2]), proxy[0])
 
             try:
                 client = TelegramClient(
                     StringSession(session_string),
                     API_ID,
                     API_HASH,
-                    connection=ConnectionTcpMTProxy,
-                    proxy=(formatted_proxy["addr"], formatted_proxy["port"], formatted_proxy["secret"]),
+                    proxy=formatted_proxy,
                 )
                 await client.connect()
                 if await client.is_user_authorized():
@@ -107,18 +101,13 @@ async def connect_existing_sessions(proxies, required_count):
 async def login(phone, proxy=None):
     """Login function with MTProto proxy support for Telethon 1.38.1."""
     try:
-        formatted_proxy = None if not proxy else {
-            "addr": proxy[1],
-            "port": int(proxy[2]),
-            "secret": bytes.fromhex(proxy[0]),
-        }
+        formatted_proxy = None if not proxy else (proxy[1], int(proxy[2]), proxy[0])
 
         client = TelegramClient(
             f'session_{phone}',
             API_ID,
             API_HASH,
-            connection=ConnectionTcpMTProxy,
-            proxy=(formatted_proxy["addr"], formatted_proxy["port"], formatted_proxy["secret"]),
+            proxy=formatted_proxy,
         )
         await client.connect()
 
@@ -157,11 +146,7 @@ async def assign_proxies_to_new_sessions(proxies, accounts_needed):
     for i in range(accounts_needed):
         phone = input(f"Enter the phone number for account {i + 1}: ")
         proxy = None if not proxies else proxies[i % len(proxies)]
-        formatted_proxy = None if not proxy else {
-            "addr": proxy[1],
-            "port": int(proxy[2]),
-            "secret": bytes.fromhex(proxy[0]),
-        }
+        formatted_proxy = None if not proxy else (proxy[1], int(proxy[2]), proxy[0])
 
         client = await login(phone, proxy=proxy)
         if client:
