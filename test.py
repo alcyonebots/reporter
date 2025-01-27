@@ -1,27 +1,28 @@
-from telethon.sync import TelegramClient
-from telethon.sessions import StringSession
+from telethon import TelegramClient, connection
 from telethon.errors import SessionPasswordNeededError
-from telethon.tl.types import InputPhoneContact
-from telethon.network.proxy import MTProtoProxy
-import os
+from telethon.sessions import StringSession
 
-# Replace with your proxy settings
-proxy = MTProtoProxy(
-    addr='rakadron.komperiistaionnop.info',  # Proxy address
-    port=443,  # Proxy port
-    secret=b'ee151151151151151151151151151151152D2D2D2D2D2D7765622E61707063656E7465722E6D73692D2D2D2D2D2Da'  # Proxy secret (should be bytes)
-)
-
-# Set your api_id and api_hash from Telegram
+# Replace these values with your actual API ID and hash
 api_id = '29872536'
 api_hash = '65e1f714a47c0879734553dc460e98d6'
+
+# Replace these with your MTProto proxy details
+proxy_host = 'rakadron.komperiistaionnop.info'
+proxy_port = 443
+proxy_secret = 'ee151151151151151151151151151151152D2D2D2D2D2D7765622E61707063656E7465722E6D73692D2D2D2D2D2Da'
 
 # Define the phone number and initiate the login
 async def main():
     phone_number = input("Enter your phone number (with country code): ")
 
-    # Create a new Telethon client with MTProtoProxy
-    client = TelegramClient(StringSession(), api_id, api_hash, proxy=proxy)
+    # Create a new TelegramClient with MTProto proxy
+    client = TelegramClient(
+        StringSession(),
+        api_id,
+        api_hash,
+        connection=connection.ConnectionTcpMTProxyRandomizedIntermediate,
+        proxy=(proxy_host, proxy_port, proxy_secret)
+    )
 
     # Start the client
     await client.start(phone_number)
