@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from telethon import TelegramClient
+from telethon import TelegramClient, connection
 from telethon.sessions import StringSession
 from telethon.tl.functions.account import ReportPeerRequest
 from telethon.tl.types import (
@@ -25,7 +25,7 @@ API_ID = "29872536"
 API_HASH = "65e1f714a47c0879734553dc460e98d6"
 
 # MongoDB connection
-MONGO_URI = "mongodb+srv://Cenzo:Cenzo123@cenzo.azbk1.mongodb.net/"
+MONGO_URI = "mongodb+srv://denji3494:denji3494@cluster0.bskf1po.mongodb.net/"
 DB_NAME = "reporter"
 COLLECTION_NAME = "sessions"
 
@@ -58,7 +58,6 @@ def load_proxies(file_path="proxy.txt"):
         return []
 
 
-
 async def connect_existing_sessions(proxies, required_count):
     """Retrieve and connect to sessions in the database with MTProto proxy support."""
     existing_sessions = []
@@ -69,19 +68,20 @@ async def connect_existing_sessions(proxies, required_count):
 
         for retry in range(5):  # Retry multiple times per proxy
             proxy = None if not proxies else proxies[(i + retry) % len(proxies)]
-            formatted_proxy = None if not proxy else (proxy[1], int(proxy[2]), proxy[0])
+            formatted_proxy = None if not proxy else (proxy[0], int(proxy[1]), proxy[2])  # (host, port, secret)
 
             try:
                 client = TelegramClient(
                     StringSession(session_string),
                     API_ID,
                     API_HASH,
+                    connection=connection.ConnectionTcpMTProxyRandomizedIntermediate,
                     proxy=formatted_proxy,
                 )
                 await client.connect()
                 if await client.is_user_authorized():
                     logger.info(
-                        f"Connected to existing session for phone: {phone} using proxy: {formatted_proxy}"
+                        f"Connected to existing session for phone: {phone} using MTProto Proxy: {formatted_proxy}"
                     )
                     existing_sessions.append(client)
                     break
@@ -100,14 +100,15 @@ async def connect_existing_sessions(proxies, required_count):
 
 
 async def login(phone, proxy=None):
-    """Login function with MTProto proxy support for Telethon 1.38.1."""
+    """Login function with MTProto proxy support."""
     try:
-        formatted_proxy = None if not proxy else (proxy[1], int(proxy[2]), proxy[0])
+        formatted_proxy = None if not proxy else (proxy[0], int(proxy[1]), proxy[2])  # (host, port, secret)
 
         client = TelegramClient(
             f'session_{phone}',
             API_ID,
             API_HASH,
+            connection=connection.ConnectionTcpMTProxyRandomizedIntermediate,
             proxy=formatted_proxy,
         )
         await client.connect()
@@ -147,11 +148,11 @@ async def assign_proxies_to_new_sessions(proxies, accounts_needed):
     for i in range(accounts_needed):
         phone = input(f"Enter the phone number for account {i + 1}: ")
         proxy = None if not proxies else proxies[i % len(proxies)]
-        formatted_proxy = None if not proxy else (proxy[1], int(proxy[2]), proxy[0])
+        formatted_proxy = None if not proxy else (proxy[0], int(proxy[1]), proxy[2])  # (host, port, secret)
 
         client = await login(phone, proxy=proxy)
         if client:
-            logger.info(f"[✓] Logged in to new account {phone} using proxy: {formatted_proxy}")
+            logger.info(f"[✓] Logged in to new account {phone} using MTProto Proxy: {formatted_proxy}")
             new_sessions.append(client)
     return new_sessions
 
