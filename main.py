@@ -26,7 +26,7 @@ API_HASH = "65e1f714a47c0879734553dc460e98d6"
 
 # MongoDB connection
 MONGO_URI = "mongodb+srv://denji3494:denji3494@cluster0.bskf1po.mongodb.net/"
-DB_NAME = "reporter"
+DB_NAME = "Report"
 COLLECTION_NAME = "sessions"
 
 client = MongoClient(MONGO_URI)
