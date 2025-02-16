@@ -2,6 +2,7 @@ import asyncio
 import logging
 from telethon import TelegramClient, connection
 from telethon.sessions import StringSession
+from telethon.tl.functions.messages import ReportRequest  # Import required function    
 from telethon.tl.functions.account import ReportPeerRequest
 from telethon.tl.types import (
     InputReportReasonSpam,
@@ -148,7 +149,7 @@ async def assign_proxies_to_new_sessions(proxies, accounts_needed):
     return new_sessions
 
 async def report_entity(client, entity, reason, times_to_report, message_id=None, custom_message=None):
-    """Report an entity or a specific message."""
+    """Report an entity (user/group/channel) or a specific message."""
     try:
         if reason not in REPORT_REASONS:
             logger.error(f"Invalid report reason: {reason}")
@@ -160,14 +161,25 @@ async def report_entity(client, entity, reason, times_to_report, message_id=None
 
         for _ in range(times_to_report):
             try:
-                if message_id:
-                    result = await client(ReportPeerRequest(entity_peer, REPORT_REASONS[reason], message, message_id))
+                if message_id:  
+                    # ✅ Report a specific message using `messages.ReportRequest`
+                    result = await client(ReportRequest(
+                        peer=entity_peer,
+                        id=[message_id],  # Message ID must be inside a list
+                        reason=REPORT_REASONS[reason],
+                        message=message
+                    ))
                 else:
-                    result = await client(ReportPeerRequest(entity_peer, REPORT_REASONS[reason], message))
+                    # ✅ Report a user, group, or channel
+                    result = await client(ReportPeerRequest(
+                        peer=entity_peer,
+                        reason=REPORT_REASONS[reason],
+                        message=message
+                    ))
 
                 if result:
                     successful_reports += 1
-                    logger.info(f"[✓] Reported {entity} (Message ID: {message_id}) for {reason}.")
+                    logger.info(f"[✓] Successfully reported {entity} for {reason}.")
                 else:
                     logger.warning(f"[✗] Failed to report {entity}.")
             except Exception as e:
