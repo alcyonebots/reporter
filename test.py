@@ -3,7 +3,8 @@ import logging
 import re
 from telethon import TelegramClient
 from telethon.sessions import StringSession
-from telethon.tl.functions.account import ReportPeerRequest, ReportSpamRequest
+from telethon.tl.functions.account import ReportPeerRequest
+from telethon.tl.functions.messages import ReportRequest
 from telethon.tl.types import (
     InputReportReasonSpam,
     InputReportReasonViolence,
@@ -146,7 +147,7 @@ async def report_message(client, message_link, reason):
         message_id = int(message_id)
 
         message_reason = REPORT_REASONS.get(reason, InputReportReasonOther())
-        result = await client(ReportSpamRequest(entity_peer, [message_id], message_reason))
+        result = await client(ReportRequest(peer=entity_peer, id=[message_id], reason=message_reason))
         
         if result:
             logger.info(f"[✓] Successfully reported message {message_id} in {username} for {reason}.")
