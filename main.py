@@ -148,28 +148,42 @@ async def assign_proxies_to_new_sessions(proxies, accounts_needed):
     
     return new_sessions
     
-async def report_entity(client, entity, reason, times_to_report, message_id=None, custom_message=None):
+from telethon.tl.functions.messages import ReportRequest
+from telethon.tl.functions.account import ReportPeerRequest
+
+# Mapping for `option` values (adjust as needed)
+REPORT_OPTIONS = {
+    "spam": 1,
+    "violence": 2,
+    "pornography": 3,
+    "child abuse": 4,
+    "copyright infringement": 5,
+    "scam": 6,
+    "other": 7,
+}
+
+async def report_entity(client, entity, option, times_to_report, message_id=None, custom_message=None):
     """Report an entity (user/group/channel) or a specific message."""
     try:
         entity_peer = await client.get_input_entity(entity)
-        message = custom_message if custom_message else f"Reported for {reason}."
+        message = custom_message if custom_message else "This content violates Telegram guidelines."
         successful_reports = 0
 
         for _ in range(times_to_report):
             try:
                 if message_id:
-                    # ✅ Correct usage of `messages.ReportRequest`
+                    # ✅ Correct usage of `ReportRequest` with `option`
                     result = await client(ReportRequest(
                         peer=entity_peer,  
-                        id=[int(message_id)],  # Message ID inside a list
-                        option=1,  # Required field (1 is the standard option for reporting)
-                        message=message  # Required field (custom or default)
+                        id=[int(message_id)],  # Message ID must be in a list
+                        option=REPORT_OPTIONS[option],  # Use `option` instead of `reason`
+                        message=message  # Required field
                     ))
                 else:
-                    # ✅ Correct usage of `ReportPeerRequest`
+                    # ✅ Using `ReportPeerRequest` for groups, channels, or users
                     result = await client(ReportPeerRequest(
                         peer=entity_peer,
-                        reason=REPORT_REASONS[reason],
+                        reason=REPORT_OPTIONS[option],  # Not actually needed for `ReportPeerRequest`
                         message=message
                     ))
 
@@ -215,23 +229,27 @@ async def main():
 
     entity = input("Enter the entity username or ID: ").strip()
 
-    # Ask for message ID **only** if reporting a specific message
+    # ✅ If choice is 4 (specific message), ask for message ID
     message_id = None
     if choice == 4:
         message_id = int(input("Enter the Message ID to report: "))
 
-    print("\nAvailable reasons for reporting:")
-    for idx, reason in enumerate(REPORT_REASONS.keys(), 1):
-        print(f"{idx} - {reason.capitalize()}")
+    print("\nAvailable options for reporting:")
+    for idx, option in enumerate(REPORT_OPTIONS.keys(), 1):
+        print(f"{idx} - {option.capitalize()}")
 
-    reason_choice = int(input("Enter your choice for report reason: "))
-    reason = list(REPORT_REASONS.keys())[reason_choice - 1]
+    option_choice = int(input("Enter your choice for report option: "))
+    option = list(REPORT_OPTIONS.keys())[option_choice - 1]  
 
     custom_message = input("Enter a custom report message (leave blank for default): ").strip() or None
     times_to_report = int(input("Enter the number of times to report: "))
 
-    # ✅ Run all report tasks concurrently
-    tasks = [report_entity(client, entity, reason, times_to_report, message_id, custom_message) for client in clients]
+    # ✅ Correct function usage for `ReportRequest` when choice is 4
+    if choice == 4:
+        tasks = [report_entity(client, entity, option, times_to_report, message_id, custom_message) for client in clients]
+    else:
+        tasks = [report_entity(client, entity, option, times_to_report, None, custom_message) for client in clients]
+
     results = await asyncio.gather(*tasks)
     total_successful_reports = sum(results)
 
