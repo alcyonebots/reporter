@@ -174,10 +174,10 @@ async def report_entity(client, entity, option, times_to_report, message_id=None
                 if message_id:
                     # ✅ Correct usage of `ReportRequest` with `option`
                     result = await client(ReportRequest(
-                        peer=entity_peer,  
-                        id=[int(message_id)],  # Message ID must be in a list
-                        option=REPORT_OPTIONS[option],  # Use `option` instead of `reason`
-                        message=message  # Required field
+                        peer=entity_peer,
+                        id=[int(message_id)],  # Message ID inside a list
+                        option=int(option),  # ✅ Convert option to integer
+                        message=str(message)  # ✅ Ensure message is a string
                     ))
                 else:
                     # ✅ Using `ReportPeerRequest` for groups, channels, or users
