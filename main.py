@@ -206,13 +206,26 @@ async def main():
     choice = int(input("Enter your choice (1/2/3/4): "))
 
     entity = input("Enter the entity username or ID: ").strip()
-    message_id = int(input("Enter the message ID to report (0 if not applicable): ")) if choice == 4 else None
 
-    reason = list(REPORT_REASONS.keys())[int(input("Enter your choice for reason: ")) - 1]
+    # Ask for message ID **only** if reporting a specific message
+    message_id = None
+    if choice == 4:
+        message_id = int(input("Enter the Message ID to report: "))
+
+    print("\nAvailable reasons for reporting:")
+    for idx, reason in enumerate(REPORT_REASONS.keys(), 1):
+        print(f"{idx} - {reason.capitalize()}")
+
+    reason_choice = int(input("Enter your choice for report reason: "))
+    reason = list(REPORT_REASONS.keys())[reason_choice - 1]
+
     custom_message = input("Enter a custom report message (leave blank for default): ").strip() or None
     times_to_report = int(input("Enter the number of times to report: "))
 
-    total_successful_reports = sum(await report_entity(client, entity, reason, times_to_report, message_id, custom_message) for client in clients)
+    # ✅ Run all report tasks concurrently
+    tasks = [report_entity(client, entity, reason, times_to_report, message_id, custom_message) for client in clients]
+    results = await asyncio.gather(*tasks)
+    total_successful_reports = sum(results)
 
     print(f"\n[✓] Total successful reports submitted: {total_successful_reports}")
 
