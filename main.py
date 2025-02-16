@@ -199,7 +199,7 @@ async def assign_proxies_to_new_sessions(proxies, count):
                 continue  # Try another proxy
 
     return new_clients
-
+    
 async def main():
     print("\n=== Telegram Multi-Account Reporting Tool ===")
 
@@ -246,7 +246,8 @@ async def main():
         if choice == 1:
             await report_entity(client, entity, reason, custom_message)
         elif choice == 2:
-            await report_message(client, entity, message_id, reason, custom_message)
+            chat_peer = await client.get_input_entity(entity)  # Convert username to entity if needed
+            await report_message(client, chat_peer, message_id, reason, custom_message)
 
     print("\n[✓] Reports submitted successfully!")
 
