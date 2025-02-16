@@ -162,12 +162,11 @@ async def report_entity(client, entity, reason, times_to_report, message_id=None
         for _ in range(times_to_report):
             try:
                 if message_id:  
-                    # ✅ Report a specific message using `messages.ReportRequest`
+                    # ✅ Correct usage of `messages.ReportRequest`
                     result = await client(ReportRequest(
                         peer=entity_peer,
                         id=[message_id],  # Message ID must be inside a list
-                        reason=REPORT_REASONS[reason],
-                        message=message
+                        reason=[REPORT_REASONS[reason]]  # ✅ Pass reason as a list
                     ))
                 else:
                     # ✅ Report a user, group, or channel
@@ -190,7 +189,7 @@ async def report_entity(client, entity, reason, times_to_report, message_id=None
     except Exception as e:
         logger.error(f"Failed to report {entity}: {str(e)}")
         return 0
-
+        
 async def main():
     print("\n=== Telegram Multi-Account Reporting Tool ===")
 
