@@ -147,7 +147,7 @@ async def assign_proxies_to_new_sessions(proxies, accounts_needed):
             new_sessions.append(client)
     
     return new_sessions
-
+    
 async def report_entity(client, entity, reason, times_to_report, message_id=None, custom_message=None):
     """Report an entity (user/group/channel) or a specific message."""
     try:
@@ -162,12 +162,14 @@ async def report_entity(client, entity, reason, times_to_report, message_id=None
         for _ in range(times_to_report):
             try:
                 if message_id:  
-                    # ✅ Use `messages.ReportSpamRequest` for specific message reports
-                    result = await client(ReportSpamRequest(
-                        peer=entity_peer  # Entity (Group/Channel/User)
+                    # ✅ Correct usage of `messages.ReportRequest`
+                    result = await client(ReportRequest(
+                        peer=entity_peer,  
+                        id=[int(message_id)],  # Message ID must be inside a list
+                        reason=[REPORT_REASONS[reason]]  # ✅ Pass reason as a list
                     ))
                 else:
-                    # ✅ Use `ReportPeerRequest` for general reports
+                    # ✅ Report a user, group, or channel
                     result = await client(ReportPeerRequest(
                         peer=entity_peer,
                         reason=REPORT_REASONS[reason],
