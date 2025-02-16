@@ -151,25 +151,22 @@ async def assign_proxies_to_new_sessions(proxies, accounts_needed):
 async def report_entity(client, entity, reason, times_to_report, message_id=None, custom_message=None):
     """Report an entity (user/group/channel) or a specific message."""
     try:
-        if reason not in REPORT_REASONS:
-            logger.error(f"Invalid report reason: {reason}")
-            return 0
-
         entity_peer = await client.get_input_entity(entity)
         message = custom_message if custom_message else f"Reported for {reason}."
         successful_reports = 0
 
         for _ in range(times_to_report):
             try:
-                if message_id:  
+                if message_id:
                     # ✅ Correct usage of `messages.ReportRequest`
                     result = await client(ReportRequest(
                         peer=entity_peer,  
-                        id=[int(message_id)],  # Message ID must be inside a list
-                        reason=[REPORT_REASONS[reason]]  # ✅ Pass reason as a list
+                        id=[int(message_id)],  # Message ID inside a list
+                        option=1,  # Required field (1 is the standard option for reporting)
+                        message=message  # Required field (custom or default)
                     ))
                 else:
-                    # ✅ Report a user, group, or channel
+                    # ✅ Correct usage of `ReportPeerRequest`
                     result = await client(ReportPeerRequest(
                         peer=entity_peer,
                         reason=REPORT_REASONS[reason],
@@ -178,7 +175,7 @@ async def report_entity(client, entity, reason, times_to_report, message_id=None
 
                 if result:
                     successful_reports += 1
-                    logger.info(f"[✓] Successfully reported {entity} for {reason}.")
+                    logger.info(f"[✓] Successfully reported {entity}.")
                 else:
                     logger.warning(f"[✗] Failed to report {entity}.")
             except Exception as e:
