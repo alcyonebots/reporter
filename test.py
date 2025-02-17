@@ -1,95 +1,39 @@
-from telethon import TelegramClient
+from telethon import TelegramClient, functions
 from telethon.sessions import StringSession
-from telethon.tl.functions.messages import ReportRequest
-from telethon.tl.types import (
-    InputReportReasonSpam,
-    InputReportReasonViolence,
-    InputReportReasonPornography,
-    InputReportReasonChildAbuse,
-    InputReportReasonOther
-)
-import asyncio
 
-async def main():
-    # Initialize client with string session
-    print("=== Telegram Message Reporter ===")
-    string_session = input("Enter your Telethon string session: ")
-    api_id = int(input("Enter your API ID: "))
-    api_hash = input("Enter your API Hash: ")
+# Replace these with your actual api_id and api_hash
+api_id = 29872536        # e.g., 123456
+api_hash = '65e1f714a47c0879734553dc460e98d6'  # e.g., '0123456789abcdef0123456789abcdef'
 
-    # Create client using the string session
-    client = TelegramClient(StringSession(string_session), api_id, api_hash)
-    await client.start()
+# Prompt for necessary information
+string_session = input("Enter your Telethon string session: ")
+group_identifier = input("Enter the group username or ID: ")
+message_id_input = input("Enter the message ID to report: ")
 
-    # Get target chat/channel
-    target = input("\nEnter username/ID of group/channel (e.g., 'mygroup' or -100123456789): ")
+# Validate and convert message ID to integer
+try:
+    message_id = int(message_id_input)
+except ValueError:
+    print("Invalid message ID. It must be an integer.")
+    exit(1)
+
+# Initialize the Telegram client with the provided string session
+client = TelegramClient(StringSession(string_session), api_id, api_hash)
+
+async def report_message():
     try:
-        entity = await client.get_entity(target)
+        # Retrieve the group entity based on the provided username/ID
+        group = await client.get_entity(group_identifier)
+        
+        # Report the message as spam (the only available report type via the API)
+        await client(functions.messages.ReportSpamRequest(
+            peer=group,
+            id=[message_id]
+        ))
+        print("Message reported successfully.")
     except Exception as e:
-        print(f"Error finding entity: {e}")
-        return
+        print("An error occurred:", e)
 
-    # Get message ID
-    try:
-        msg_id = int(input("\nEnter the message ID to report: "))
-    except ValueError:
-        print("Invalid message ID! Must be a number.")
-        return
-
-    # Select reason
-    print("\nSelect report reason:")
-    print("1. Spam")
-    print("2. Violence")
-    print("3. Pornography")
-    print("4. Child Abuse")
-    print("5. Other")
-    
-    reason_choice = input("Enter choice (1-5): ")
-    reason_map = {
-        '1': InputReportReasonSpam(),
-        '2': InputReportReasonViolence(),
-        '3': InputReportReasonPornography(),
-        '4': InputReportReasonChildAbuse(),
-        '5': InputReportReasonOther()
-    }
-    
-    reason = reason_map.get(reason_choice)
-    if not reason:
-        print("Invalid reason selection!")
-        return
-
-    # Get report count
-    try:
-        report_count = int(input("\nHow many times to report? (1-10 recommended): "))
-        if report_count < 1 or report_count > 100:
-            print("Please enter between 1-100 reports")
-            return
-    except ValueError:
-        print("Invalid number!")
-        return
-
-    # Confirm
-    confirm = input(f"\nWARNING: You're about to report message {msg_id} in {entity.title} {report_count} times as {type(reason).__name__}. Continue? (y/n): ")
-    if confirm.lower() != 'y':
-        print("Aborted!")
-        return
-
-    # Perform reporting
-    print("\nReporting...")
-    for i in range(report_count):
-        try:
-            await client(ReportRequest(
-                peer=entity,
-                id=[msg_id],  # Must be list even for single message
-                reason=reason,
-                message="illegal"
-            ))
-            print(f"Report #{i+1} sent successfully")
-            await asyncio.sleep(1)  # Add small delay between requests
-        except Exception as e:
-            print(f"Error in report #{i+1}: {str(e)}")
-    
-    print("\nReporting process completed!")
-
-if __name__ == "__main__":
-    asyncio.run(main())
+# Run the asynchronous function within the client's event loop
+with client:
+    client.loop.run_until_complete(report_message())
