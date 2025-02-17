@@ -25,15 +25,13 @@ async def report_message():
         # Retrieve the group entity based on the provided username/ID
         group = await client.get_entity(group_identifier)
         
-        # Report the message as spam (the only available report type via the API)
+        # Report the message as spam by passing arguments positionally
         await client(functions.messages.ReportSpamRequest(
-            peer=group,
-            id=[message_id]
+            group, [message_id]
         ))
         print("Message reported successfully.")
     except Exception as e:
         print("An error occurred:", e)
 
-# Run the asynchronous function within the client's event loop
 with client:
     client.loop.run_until_complete(report_message())
