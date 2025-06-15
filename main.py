@@ -3,6 +3,7 @@ import logging
 from telethon import TelegramClient, connection
 from telethon.sessions import StringSession
 from telethon.tl.functions.account import ReportPeerRequest
+from telethon.tl.functions.messages import ReportRequest
 from telethon.tl.types import (
     InputReportReasonSpam,
     InputReportReasonViolence,
@@ -66,9 +67,9 @@ async def connect_existing_sessions(proxies, required_count):
         phone = session_data["phone"]
         session_string = session_data["session_string"]
 
-        for retry in range(5):  # Retry multiple times per proxy
+        for retry in range(5):
             proxy = None if not proxies else proxies[(i + retry) % len(proxies)]
-            formatted_proxy = None if not proxy else (proxy[0], int(proxy[1]), proxy[2])  # (host, port, secret)
+            formatted_proxy = None if not proxy else (proxy[0], int(proxy[1]), proxy[2])
 
             try:
                 client = TelegramClient(
@@ -86,23 +87,19 @@ async def connect_existing_sessions(proxies, required_count):
                     existing_sessions.append(client)
                     break
                 else:
-                    logger.warning(
-                        f"Session for {phone} is not authorized. Removing it from the database."
-                    )
+                    logger.warning(f"Session for {phone} not authorized. Removing.")
                     sessions_collection.delete_one({"phone": phone})
                     await client.disconnect()
                     break
             except Exception as e:
-                logger.warning(
-                    f"Proxy issue for session {phone}: {formatted_proxy}. Retrying... ({retry + 1}/5)"
-                )
+                logger.warning(f"Proxy issue for session {phone}: {formatted_proxy}. Retrying... ({retry + 1}/5)")
     return existing_sessions
 
 
 async def login(phone, proxy=None):
     """Login function with MTProto proxy support."""
     try:
-        formatted_proxy = None if not proxy else (proxy[0], int(proxy[1]), proxy[2])  # (host, port, secret)
+        formatted_proxy = None if not proxy else (proxy[0], int(proxy[1]), proxy[2])
 
         client = TelegramClient(
             f'session_{phone}',
@@ -114,17 +111,15 @@ async def login(phone, proxy=None):
         await client.connect()
 
         if not await client.is_user_authorized():
-            logger.info(f"Account {phone} is not authorized. Logging in...")
+            logger.info(f"Account {phone} not authorized. Logging in...")
             await client.send_code_request(phone)
             otp = input(f"Enter the OTP for {phone}: ")
             await client.sign_in(phone, otp)
 
-            # Handle 2FA if enabled
             if not await client.is_user_authorized():
                 password = input(f"Enter the 2FA password for {phone}: ")
                 await client.sign_in(password=password)
 
-            # Save the session string to MongoDB
             session_string = StringSession.save(client.session)
             sessions_collection.update_one(
                 {"phone": phone},
@@ -138,7 +133,7 @@ async def login(phone, proxy=None):
         return client
 
     except Exception as e:
-        logger.error(f"Error during login for account {phone}: {str(e)}")
+        logger.error(f"Error during login for {phone}: {str(e)}")
         return None
 
 
@@ -148,32 +143,44 @@ async def assign_proxies_to_new_sessions(proxies, accounts_needed):
     for i in range(accounts_needed):
         phone = input(f"Enter the phone number for account {i + 1}: ")
         proxy = None if not proxies else proxies[i % len(proxies)]
-        formatted_proxy = None if not proxy else (proxy[0], int(proxy[1]), proxy[2])  # (host, port, secret)
+        formatted_proxy = None if not proxy else (proxy[0], int(proxy[1]), proxy[2])
 
         client = await login(phone, proxy=proxy)
         if client:
-            logger.info(f"[✓] Logged in to new account {phone} using MTProto Proxy: {formatted_proxy}")
+            logger.info(f"[✓] Logged in to new account {phone} using Proxy: {formatted_proxy}")
             new_sessions.append(client)
     return new_sessions
 
 
-async def report_entity(client, entity, reason, times_to_report):
-    """Report an entity with improved error handling and logging."""
+async def report_entity(client, entity, reason, times_to_report, message, msg_id=None):
+    """Report a peer or specific message."""
     try:
         if reason not in REPORT_REASONS:
             logger.error(f"Invalid report reason: {reason}")
             return 0
 
         entity_peer = await client.get_input_entity(entity)
-        message = f"Reported for {reason}."
         successful_reports = 0
 
         for _ in range(times_to_report):
             try:
-                result = await client(ReportPeerRequest(entity_peer, REPORT_REASONS[reason], message))
+                if msg_id:
+                    result = await client(ReportRequest(
+                        peer=entity_peer,
+                        id=[msg_id],
+                        reason=REPORT_REASONS[reason],
+                        message=message
+                    ))
+                else:
+                    result = await client(ReportPeerRequest(
+                        peer=entity_peer,
+                        reason=REPORT_REASONS[reason],
+                        message=message
+                    ))
+
                 if result:
                     successful_reports += 1
-                    logger.info(f"[✓] Reported {entity} for {reason}.")
+                    logger.info(f"[✓] Reported {entity} {'message' if msg_id else 'peer'} for {reason}.")
                 else:
                     logger.warning(f"[✗] Failed to report {entity}.")
             except Exception as e:
@@ -187,44 +194,53 @@ async def report_entity(client, entity, reason, times_to_report):
 
 
 async def main():
-    print("\n=== Telegram Multi-Account Reporting Tool ===")
-    print("\nThis tool helps you report entities using multiple Telegram accounts.\n")
-
-    account_count = int(input("Enter the number of accounts to use for reporting: "))
+    print("\n=== Telegram Multi-Account Reporter ===\n")
+    account_count = int(input("Enter the number of accounts to use: "))
     proxies = load_proxies()
 
     session_docs = list(sessions_collection.find())
     existing_count = len(session_docs)
 
     if existing_count >= account_count:
-        print(f"\n[✓] There are {account_count} existing sessions. No new accounts required.")
+        print(f"[✓] {account_count} sessions available.")
         clients = await connect_existing_sessions(proxies, account_count)
     else:
-        print(f"\n[✓] {existing_count} sessions found in the database.")
-        new_accounts_needed = account_count - existing_count
-        print(f"[!] Please log in to {new_accounts_needed} new accounts.")
+        print(f"[✓] {existing_count} existing sessions found.")
+        new_needed = account_count - existing_count
+        print(f"[!] Logging in to {new_needed} new accounts.")
         existing_clients = await connect_existing_sessions(proxies, existing_count)
-        new_clients = await assign_proxies_to_new_sessions(proxies, new_accounts_needed)
+        new_clients = await assign_proxies_to_new_sessions(proxies, new_needed)
         clients = existing_clients + new_clients
 
-    print("\nSelect the type of entity to report:")
+    print("\nSelect what you want to report:")
     print("1 - Group")
     print("2 - Channel")
     print("3 - User")
-    choice = int(input("Enter your choice (1/2/3): "))
-    entity = input("Enter the group/channel username or user ID to report: ").strip()
+    print("4 - Specific message in a chat")  # new
+    choice = int(input("Enter your choice (1/2/3/4): "))
+
+    if choice == 4:
+        entity = input("Enter the chat username or ID: ").strip()
+        msg_id = int(input("Enter the message ID to report: "))
+    else:
+        entity = input("Enter the group/channel username or user ID to report: ").strip()
+        msg_id = None
+
     print("\nAvailable reasons for reporting:")
     for idx, reason in enumerate(REPORT_REASONS.keys(), 1):
         print(f"{idx} - {reason.capitalize()}")
     reason_choice = int(input("Enter your choice: "))
     reason = list(REPORT_REASONS.keys())[reason_choice - 1]
 
-    times_to_report = int(input("Enter the number of times to report: "))
-    total_successful_reports = 0
+    times_to_report = int(input("Enter how many times each account should report: "))
+    message = input("Enter custom report message: ").strip()
 
-    for client in clients:
-        successful_reports = await report_entity(client, entity, reason, times_to_report)
-        total_successful_reports += successful_reports
+    tasks = [
+        report_entity(client, entity, reason, times_to_report, message, msg_id=msg_id)
+        for client in clients
+    ]
+    results = await asyncio.gather(*tasks)
+    total_successful_reports = sum(results)
 
     print(f"\n[✓] Total successful reports submitted: {total_successful_reports}")
 
