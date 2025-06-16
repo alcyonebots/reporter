@@ -1,6 +1,7 @@
 import asyncio
 import logging
-from telethon import TelegramClient
+import socks
+from telethon import TelegramClient, connection
 from telethon.sessions import StringSession
 from telethon.tl.functions.account import ReportPeerRequest
 from telethon.tl.functions.messages import ReportRequest
@@ -13,23 +14,16 @@ from telethon.tl.types import (
     InputReportReasonFake,
     InputReportReasonOther,
 )
-from telethon.network.connection import ConnectionTcpMTProxyRandomizedIntermediate
-from telethon import connection
-from telethon.network import Socks5Connection
 from pymongo import MongoClient
-import socks
 
 # Logging setup
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s"
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 API_ID = "29872536"
 API_HASH = "65e1f714a47c0879734553dc460e98d6"
 
-# MongoDB connection
+# MongoDB setup
 MONGO_URI = "mongodb+srv://denji3494:denji3494@cluster0.bskf1po.mongodb.net/"
 DB_NAME = "idnunu"
 COLLECTION_NAME = "sessions"
@@ -38,7 +32,7 @@ client = MongoClient(MONGO_URI)
 db = client[DB_NAME]
 sessions_collection = db[COLLECTION_NAME]
 
-# Reasons for reporting
+# Report reasons
 REPORT_REASONS = {
     "spam": InputReportReasonSpam(),
     "violence": InputReportReasonViolence(),
@@ -49,26 +43,24 @@ REPORT_REASONS = {
     "other": InputReportReasonOther(),
 }
 
-
+# Load SOCKS5 proxies from file
 def load_proxies(file_path="proxy.txt"):
     try:
         with open(file_path, "r") as f:
-            proxies = [
-                tuple(line.strip().split(",")) for line in f.readlines() if line.strip()
-            ]
+            proxies = [tuple(line.strip().split(",")) for line in f if line.strip()]
         return proxies
     except FileNotFoundError:
         logger.error(f"Proxy file '{file_path}' not found.")
         return []
 
-
+# Format proxy tuple for Telethon
 def format_socks5(proxy_tuple):
     host, port = proxy_tuple[0], int(proxy_tuple[1])
     user = proxy_tuple[2] if len(proxy_tuple) > 2 else None
     pwd = proxy_tuple[3] if len(proxy_tuple) > 3 else None
     return (socks.SOCKS5, host, port, True, user, pwd)
 
-
+# Connect to existing sessions from DB
 async def connect_existing_sessions(proxies, required_count):
     existing_sessions = []
     session_docs = list(sessions_collection.find())
@@ -85,7 +77,7 @@ async def connect_existing_sessions(proxies, required_count):
                     API_ID,
                     API_HASH,
                     proxy=proxy,
-                    connection=connection.ConnectionTcpMTProxyIntermediate if proxy else connection.ConnectionTcpFull
+                    connection=connection.ConnectionTcpFull
                 )
                 await client.connect()
                 if await client.is_user_authorized():
@@ -101,11 +93,10 @@ async def connect_existing_sessions(proxies, required_count):
                 logger.warning(f"Retry {retry+1} for {phone} with proxy {proxy}: {e}")
     return existing_sessions
 
-
+# Login new session
 async def login(phone, proxy=None):
     try:
         formatted_proxy = format_socks5(proxy) if proxy else None
-
         client = TelegramClient(
             f'session_{phone}',
             API_ID,
@@ -141,7 +132,7 @@ async def login(phone, proxy=None):
         logger.error(f"Login error for {phone}: {str(e)}")
         return None
 
-
+# Assign proxies to new sessions
 async def assign_proxies_to_new_sessions(proxies, accounts_needed):
     new_sessions = []
     for i in range(accounts_needed):
@@ -153,7 +144,7 @@ async def assign_proxies_to_new_sessions(proxies, accounts_needed):
             new_sessions.append(client)
     return new_sessions
 
-
+# Report function
 async def report_entity(client, entity, reason, times_to_report, message, msg_id=None):
     try:
         if reason not in REPORT_REASONS:
@@ -182,6 +173,7 @@ async def report_entity(client, entity, reason, times_to_report, message, msg_id
                 if result:
                     successful_reports += 1
                     logger.info(f"[✓] Reported {entity} for {reason} ({'message' if msg_id else 'peer'})")
+                await asyncio.sleep(1.5)
             except Exception as e:
                 logger.error(f"Reporting failed for {entity}: {e}")
         return successful_reports
@@ -190,7 +182,7 @@ async def report_entity(client, entity, reason, times_to_report, message, msg_id
         logger.error(f"Report setup error: {str(e)}")
         return 0
 
-
+# Main
 async def main():
     print("\n=== Telegram Multi-Account Reporter [SOCKS5] ===\n")
     account_count = int(input("Enter number of accounts to use: "))
@@ -240,7 +232,5 @@ async def main():
     for client in clients:
         await client.disconnect()
 
-
 if __name__ == "__main__":
     asyncio.run(main())
-            
