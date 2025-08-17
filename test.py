@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from telethon import TelegramClient, connection
+from telethon import TelegramClient
 from telethon.sessions import StringSession
 from pymongo import MongoClient
 
@@ -52,7 +52,7 @@ async def connect_existing_sessions(required_count):
                     StringSession(session_string),
                     API_ID,
                     API_HASH,
-                    # Removed proxy usage and use default connection
+                    # Default TCP connection without MTProto proxy
                 )
                 await client.connect()
                 if await client.is_user_authorized():
@@ -76,10 +76,7 @@ async def connect_existing_sessions(required_count):
             # No successful connect in 5 retries
             checked_sessions.append(session_data)
 
-    # Save all checked sessions with status to file
     save_all_sessions_with_status(checked_sessions)
-
-    # Return successful sessions only
     return [s for s in checked_sessions if s["status"] == "SUCCESS"]
 
 async def login(phone):
@@ -88,7 +85,7 @@ async def login(phone):
             f'session_{phone}',
             API_ID,
             API_HASH,
-            # No proxy setup here
+            # Default TCP connection without MTProto proxy
         )
         await client.connect()
         if not await client.is_user_authorized():
@@ -124,7 +121,7 @@ async def assign_new_sessions(accounts_needed):
     return new_sessions
 
 async def main():
-    print("\n=== Telegram Multi-Account Manager without Proxy ===\n")
+    print("\n=== Telegram Multi-Account Manager without MTProto Proxy ===\n")
     account_count = int(input("Enter the number of accounts to use: "))
 
     session_docs = list(sessions_collection.find())
