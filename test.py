@@ -24,10 +24,6 @@ db = client[DB_NAME]
 sessions_collection = db[COLLECTION_NAME]
 
 def save_all_sessions_with_status(docs, filename="sessions_backup.txt"):
-    """
-    Save all sessions with status in one file.
-    Each line: phone ||| session_string ||| status (SUCCESS or FAILED)
-    """
     try:
         with open(filename, "w") as f:
             for doc in docs:
@@ -41,6 +37,9 @@ def save_all_sessions_with_status(docs, filename="sessions_backup.txt"):
 
 async def connect_existing_sessions(required_count):
     checked_sessions = []
+    clients = []
+    phones = []
+
     session_docs = list(sessions_collection.find())
     for i, session_data in enumerate(session_docs[:required_count]):
         phone = session_data["phone"]
@@ -52,15 +51,14 @@ async def connect_existing_sessions(required_count):
                     StringSession(session_string),
                     API_ID,
                     API_HASH,
-                    # Default TCP connection without MTProto proxy
                 )
                 await client.connect()
                 if await client.is_user_authorized():
-                    logger.info(
-                        f"Connected to existing session for phone: {phone} successfully."
-                    )
+                    logger.info(f"Connected to existing session for phone: {phone} successfully.")
                     session_data["status"] = "SUCCESS"
                     checked_sessions.append(session_data)
+                    clients.append(client)
+                    phones.append(phone)
                     break
                 else:
                     logger.warning(f"Session for {phone} not authorized. Removing from DB.")
@@ -75,8 +73,9 @@ async def connect_existing_sessions(required_count):
         else:
             # No successful connect in 5 retries
             checked_sessions.append(session_data)
+
     save_all_sessions_with_status(checked_sessions)
-    return [s for s in checked_sessions if s["status"] == "SUCCESS"]
+    return clients, phones
 
 async def login(phone):
     try:
@@ -84,7 +83,6 @@ async def login(phone):
             f'session_{phone}',
             API_ID,
             API_HASH,
-            # Default TCP connection without MTProto proxy
         )
         await client.connect()
         if not await client.is_user_authorized():
@@ -104,20 +102,22 @@ async def login(phone):
             logger.info(f"Session saved for account {phone}.")
         else:
             logger.info(f"Account {phone} is already authorized.")
-        return client
+        return client, phone
     except Exception as e:
         logger.error(f"Error during login for {phone}: {str(e)}")
-        return None
+        return None, None
 
 async def assign_new_sessions(accounts_needed):
     new_sessions = []
+    new_phones = []
     for i in range(accounts_needed):
         phone = input(f"Enter the phone number for account {i + 1}: ")
-        client = await login(phone)
+        client, p = await login(phone)
         if client:
             logger.info(f"[✓] Logged in to new account {phone}.")
             new_sessions.append(client)
-    return new_sessions
+            new_phones.append(p)
+    return new_sessions, new_phones
 
 async def monitor_otps(clients, phones):
     print("Monitoring all sessions for OTPs (5/6 digit codes)... Press Ctrl+C to stop.")
@@ -139,16 +139,16 @@ async def main():
 
     if existing_count >= account_count:
         print(f"[✓] {account_count} sessions available.")
-        clients = await connect_existing_sessions(account_count)
+        clients, phones = await connect_existing_sessions(account_count)
     else:
         print(f"[✓] {existing_count} existing sessions found.")
         new_needed = account_count - existing_count
         print(f"[!] Logging in to {new_needed} new accounts.")
-        existing_clients = await connect_existing_sessions(existing_count)
-        new_clients = await assign_new_sessions(new_needed)
+        existing_clients, existing_phones = await connect_existing_sessions(existing_count)
+        new_clients, new_phones = await assign_new_sessions(new_needed)
         clients = existing_clients + new_clients
+        phones = existing_phones + new_phones
 
-    phones = [s["phone"] for s in sessions_collection.find({"status": "SUCCESS"})][:len(clients)]
     await monitor_otps(clients, phones)
 
 if __name__ == "__main__":
