@@ -38,7 +38,7 @@ def save_all_sessions_with_status(docs, filename="sessions_backup.txt"):
     except Exception as e:
         logger.error(f"Error saving sessions to file: {str(e)}")
 
-async def connect_existing_sessions(proxies, required_count):
+async def connect_existing_sessions(required_count):
     checked_sessions = []
 
     session_docs = list(sessions_collection.find())
@@ -46,21 +46,18 @@ async def connect_existing_sessions(proxies, required_count):
         phone = session_data["phone"]
         session_string = session_data["session_string"]
         session_data["status"] = "FAILED"  # Default status
-        for retry in range(1):
-            proxy = None if not proxies else proxies[(i + retry) % len(proxies)]
-            formatted_proxy = None if not proxy else (proxy[0], int(proxy[1]), proxy[2])
+        for retry in range(5):
             try:
                 client = TelegramClient(
                     StringSession(session_string),
                     API_ID,
                     API_HASH,
-                    connection=connection.ConnectionTcpMTProxyRandomizedIntermediate,
-                    proxy=formatted_proxy,
+                    # Removed proxy usage and use default connection
                 )
                 await client.connect()
                 if await client.is_user_authorized():
                     logger.info(
-                        f"Connected to existing session for phone: {phone} using MTProto Proxy: {formatted_proxy}"
+                        f"Connected to existing session for phone: {phone} successfully."
                     )
                     session_data["status"] = "SUCCESS"
                     checked_sessions.append(session_data)
@@ -71,7 +68,7 @@ async def connect_existing_sessions(proxies, required_count):
                     await client.disconnect()
                     break
             except Exception as e:
-                logger.warning(f"Proxy issue for session {phone}: {formatted_proxy}. Retry {retry + 1}/5.")
+                logger.warning(f"Connection issue for session {phone}. Retry {retry + 1}/5.")
                 if retry == 4:
                     logger.error(f"Failed to connect to session for {phone} after retries.")
                     checked_sessions.append(session_data)
@@ -82,31 +79,16 @@ async def connect_existing_sessions(proxies, required_count):
     # Save all checked sessions with status to file
     save_all_sessions_with_status(checked_sessions)
 
-    # Return TelegramClient objects or session_data for further use if needed
-    # Here, returning all successful session_data
+    # Return successful sessions only
     return [s for s in checked_sessions if s["status"] == "SUCCESS"]
 
-def load_proxies(file_path="proxy.txt"):
-    """Load MTProto proxies from a file."""
+async def login(phone):
     try:
-        with open(file_path, "r") as f:
-            proxies = [
-                tuple(line.strip().split(",")) for line in f.readlines() if line.strip()
-            ]
-        return proxies
-    except FileNotFoundError:
-        logger.error(f"Proxy file '{file_path}' not found.")
-        return []
-
-async def login(phone, proxy=None):
-    try:
-        formatted_proxy = None if not proxy else (proxy[0], int(proxy[1]), proxy[2])
         client = TelegramClient(
             f'session_{phone}',
             API_ID,
             API_HASH,
-            connection=connection.ConnectionTcpMTProxyRandomizedIntermediate,
-            proxy=formatted_proxy,
+            # No proxy setup here
         )
         await client.connect()
         if not await client.is_user_authorized():
@@ -131,37 +113,33 @@ async def login(phone, proxy=None):
         logger.error(f"Error during login for {phone}: {str(e)}")
         return None
 
-async def assign_proxies_to_new_sessions(proxies, accounts_needed):
+async def assign_new_sessions(accounts_needed):
     new_sessions = []
     for i in range(accounts_needed):
         phone = input(f"Enter the phone number for account {i + 1}: ")
-        proxy = None if not proxies else proxies[i % len(proxies)]
-        client = await login(phone, proxy=proxy)
+        client = await login(phone)
         if client:
-            logger.info(f"[✓] Logged in to new account {phone} using Proxy: {proxy}")
+            logger.info(f"[✓] Logged in to new account {phone}.")
             new_sessions.append(client)
     return new_sessions
 
 async def main():
-    print("\n=== Telegram Multi-Account Manager with Session Backup ===\n")
+    print("\n=== Telegram Multi-Account Manager without Proxy ===\n")
     account_count = int(input("Enter the number of accounts to use: "))
-    proxies = load_proxies()
 
     session_docs = list(sessions_collection.find())
     existing_count = len(session_docs)
 
     if existing_count >= account_count:
         print(f"[✓] {account_count} sessions available.")
-        clients = await connect_existing_sessions(proxies, account_count)
+        clients = await connect_existing_sessions(account_count)
     else:
         print(f"[✓] {existing_count} existing sessions found.")
         new_needed = account_count - existing_count
         print(f"[!] Logging in to {new_needed} new accounts.")
-        existing_clients = await connect_existing_sessions(proxies, existing_count)
-        new_clients = await assign_proxies_to_new_sessions(proxies, new_needed)
+        existing_clients = await connect_existing_sessions(existing_count)
+        new_clients = await assign_new_sessions(new_needed)
         clients = existing_clients + new_clients
-
-    # You can add your additional logic here (e.g., reporting, monitoring)
 
     # Disconnect all clients when done
     for client in clients:
