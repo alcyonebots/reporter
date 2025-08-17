@@ -1,6 +1,7 @@
 import asyncio
 import logging
-from telethon import TelegramClient
+import re
+from telethon import TelegramClient, events
 from telethon.sessions import StringSession
 from pymongo import MongoClient
 
@@ -15,7 +16,7 @@ API_ID = 29872536
 API_HASH = "65e1f714a47c0879734553dc460e98d6"
 
 MONGO_URI = "mongodb+srv://denji3494:denji3494@cluster0.bskf1po.mongodb.net/"
-DB_NAME = "ids"
+DB_NAME = "idsex"
 COLLECTION_NAME = "sessions"
 
 client = MongoClient(MONGO_URI)
@@ -40,7 +41,6 @@ def save_all_sessions_with_status(docs, filename="sessions_backup.txt"):
 
 async def connect_existing_sessions(required_count):
     checked_sessions = []
-
     session_docs = list(sessions_collection.find())
     for i, session_data in enumerate(session_docs[:required_count]):
         phone = session_data["phone"]
@@ -75,7 +75,6 @@ async def connect_existing_sessions(required_count):
         else:
             # No successful connect in 5 retries
             checked_sessions.append(session_data)
-
     save_all_sessions_with_status(checked_sessions)
     return [s for s in checked_sessions if s["status"] == "SUCCESS"]
 
@@ -120,6 +119,17 @@ async def assign_new_sessions(accounts_needed):
             new_sessions.append(client)
     return new_sessions
 
+async def monitor_otps(clients, phones):
+    print("Monitoring all sessions for OTPs (5/6 digit codes)... Press Ctrl+C to stop.")
+    for idx, client in enumerate(clients):
+        phone = phones[idx]
+        @client.on(events.NewMessage(incoming=True))
+        async def handler(event, phone=phone):
+            match = re.search(r'\b\d{5,6}\b', event.raw_text)
+            if match:
+                print(f"[{phone}] OTP received: {match.group()}")
+    await asyncio.gather(*[client.run_until_disconnected() for client in clients])
+
 async def main():
     print("\n=== Telegram Multi-Account Manager without MTProto Proxy ===\n")
     account_count = int(input("Enter the number of accounts to use: "))
@@ -140,3 +150,6 @@ async def main():
 
     phones = [s["phone"] for s in sessions_collection.find({"status": "SUCCESS"})][:len(clients)]
     await monitor_otps(clients, phones)
+
+if __name__ == "__main__":
+    asyncio.run(main())
