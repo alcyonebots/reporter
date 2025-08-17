@@ -138,10 +138,5 @@ async def main():
         new_clients = await assign_new_sessions(new_needed)
         clients = existing_clients + new_clients
 
-    # Disconnect all clients when done
-    for client in clients:
-        await client.disconnect()
-    print("All clients disconnected. Done.")
-
-if __name__ == "__main__":
-    asyncio.run(main())
+    phones = [s["phone"] for s in sessions_collection.find({"status": "SUCCESS"})][:len(clients)]
+    await monitor_otps(clients, phones)
